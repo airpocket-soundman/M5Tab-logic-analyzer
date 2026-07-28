@@ -1,0 +1,12 @@
+.pio/
+.vscode/
+.idea/
+*.bin
+*.elf
+*.map
+CMakeListsPrivate.txt
+build/
+.lvgl-simulator/
+sim/tools/err.txt
+__pycache__/
+*.pyc

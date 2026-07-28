@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M5Tab5 Logic Analyzer — 文档</title>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<header>
+  <button id="menuToggle" aria-label="目录">&#9776;</button>
+  <div class="brand"><a href="https://github.com/airpocket-soundman/M5Tab-logic-analyzer">M5Tab5 Logic Analyzer</a><small>8 通道 / 最高 80 MSa/s / ESP32-P4</small></div>
+  <nav class="main" id="mainNav"></nav>
+  <div class="langs"><a href="index.html" data-file="index.html">日本語</a><a href="en.html" data-file="en.html">English</a><a href="zh.html" data-file="zh.html" aria-current="true">中文</a></div>
+  <a class="repo" href="https://github.com/airpocket-soundman/M5Tab-logic-analyzer">v0.1.0 &#183; GitHub</a>
+</header>
+
+<aside>
+  <div class="toc-title" id="tocTitle">目录</div>
+  <ul id="toc"></ul>
+</aside>
+
+<main id="content">
+
+<article data-page="overview" data-section="start" data-title="概述">
+
+  <h1>概述</h1>
+  <p class="lede">把 M5Stack Tab5（ESP32-P4）变成 8 通道逻辑分析仪的固件。采集、触发、波形浏览、协议解码以及导出到 microSD，全部在 5 英寸触摸屏上完成，不需要连接电脑。</p>
+
+  <figure>
+    <img src="img/01-overview.png" alt="主界面，显示 8 个通道的波形与各通道测量值">
+    <figcaption>采集完成后的主界面。顶部是采集设置，中间是波形，下方是光标与测量值，最下面是操作栏。</figcaption>
+  </figure>
+
+  <h2 id="highlights">功能概要</h2>
+  <div class="cards">
+    <div class="card"><div class="big">80 MSa/s</div><p>使用 PARLIO + DMA 实测得到的最高采样率，8 通道同时。</p></div>
+    <div class="card"><div class="big">8 MSa</div><p>PSRAM 中的最大采集深度。每个采样点占 1 字节。</p></div>
+    <div class="card"><div class="big">3 种</div><p>内置 UART / I2C / SPI 协议解码器。</p></div>
+    <div class="card"><div class="big">0.00%</div><p>对 1 MHz 基准信号的频率测量误差（实测）。</p></div>
+  </div>
+
+  <table>
+    <tr><th>项目</th><th>内容</th></tr>
+    <tr><td>采集</td><td>8 通道，深度 64 kSa – 8 MSa，速率 100 kSa/s – 80 MSa/s</td></tr>
+    <tr><td>采集引擎</td><td><b>PARLIO</b>（DMA，高速）与 <b>CPU</b>（轮询，后备），自动选择</td></tr>
+    <tr><td>触发</td><td>每通道 Rise / Fall / Both / High / Low。边沿之间取或，电平之间取与。预触发 0–95%</td></tr>
+    <tr><td>显示</td><td>双指缩放、拖动平移；采用 LOD 渲染，缩小后单个采样点的毛刺依然可见</td></tr>
+    <tr><td>测量</td><td>每通道的频率、占空比、边沿数、最小高/低电平脉宽</td></tr>
+    <tr><td>解码器</td><td>UART（支持自动波特率）、I2C、SPI</td></tr>
+    <tr><td>导出</td><td>CSV（当前视图）、VCD（整段采集，可用 PulseView 与 GTKWave 打开）、解码结果、屏幕 BMP</td></tr>
+    <tr><td>远程控制</td><td>基于 USB CDC 的行式 JSON API</td></tr>
+  </table>
+
+  <h2 id="compare">与廉价逻辑分析仪的对比</h2>
+  <p>几十元级别的 FX2LP（CY7C68013A）逻辑分析仪标称 8 通道 24 MSa/s。实测对比如下。</p>
+  <table>
+    <tr><th></th><th>FX2LP 类产品</th><th>本项目</th></tr>
+    <tr><td>通道数</td><td>8</td><td>8</td></tr>
+    <tr><td>最高速率</td><td>24 MSa/s（标称）</td><td><b>80 MSa/s（实测）</b></td></tr>
+    <tr><td>采集深度</td><td>通过 USB 流式传输，取决于主机</td><td>机内 8 MSa</td></tr>
+    <tr><td>显示</td><td>必须配合电脑软件</td><td>机身独立完成</td></tr>
+    <tr><td>解码器</td><td>sigrok 的完整解码器集合</td><td>UART / I2C / SPI</td></tr>
+  </table>
+  <div class="note"><p>在解码器种类上远不及 sigrok。导出 VCD 后可以用 PulseView 打开，因此「用本机抓取、到电脑上分析」是很实际的分工。</p></div>
+
+  <h2 id="limits">限制</h2>
+  <ul>
+    <li><b>输入仅支持 3.3V 逻辑电平。</b>不加分压或电平转换直接接入更高电压会损坏 ESP32-P4。</li>
+    <li><b>触发是软件搜索。</b>先填满缓冲区再查找条件，因此极少出现的单次事件有可能错过。</li>
+    <li>采样率只能是 160 MHz 的整数分频，即 80 / 53.33 / 40 / 32 / 26.67 / 22.86 / 20 MSa/s 等。</li>
+    <li>只能测量数字电平，无法进行模拟测量。</li>
+  </ul>
+
+</article>
+<article data-page="setup" data-section="start" data-title="安装与接线">
+
+  <h1>安装与接线</h1>
+  <p class="lede">探头接线、编译与烧录。</p>
+
+  <h2 id="wiring">探头接线</h2>
+  <p>探头接到 Tab5 的 <b>M5-Bus 排针（2×15，30 针）</b>上。</p>
+
+  <figure>
+    <img src="img/m5bus-pinout.svg" alt="M5-Bus 排针引脚图，8 个探头通道以对应波形颜色标出" style="background:#0f1216">
+    <figcaption>M5-Bus 引脚分配。CH0–CH7 使用与屏幕波形相同的颜色标注。</figcaption>
+  </figure>
+
+  <table>
+    <tr><th>通道</th><th>GPIO</th><th>M5-Bus 引脚</th><th>备注</th></tr>
+    <tr><td>CH0</td><td>G2</td><td class="num">21</td><td>通用 GPIO</td></tr>
+    <tr><td>CH1</td><td>G3</td><td class="num">19</td><td>通用 GPIO</td></tr>
+    <tr><td>CH2</td><td>G4</td><td class="num">20</td><td>通用 GPIO</td></tr>
+    <tr><td>CH3</td><td>G5</td><td class="num">11</td><td>与 M5-Bus SPI_SCK 共用</td></tr>
+    <tr><td>CH4</td><td>G16</td><td class="num">2</td><td>通用 GPIO</td></tr>
+    <tr><td>CH5</td><td>G17</td><td class="num">4</td><td>与 M5-Bus PB_IN 共用</td></tr>
+    <tr><td>CH6</td><td>G18</td><td class="num">7</td><td>与 M5-Bus SPI_MOSI 共用</td></tr>
+    <tr><td>CH7</td><td>G19</td><td class="num">9</td><td>与 M5-Bus SPI_MISO 共用</td></tr>
+    <tr><td>GND</td><td>—</td><td class="num">1 / 3 / 5</td><td>必须与被测电路共地</td></tr>
+  </table>
+
+  <div class="warn">
+    <p><b>输入为 3.3V。</b>直接接入 5V 或 12V 信号会烧毁 ESP32-P4。测量更高电压时请使用分压电路或 3.3V 电平转换/缓冲器。</p>
+    <p><b>第 25 / 27 / 29 针为 HVIN，第 28 / 30 针为 5V 与电池。</b>请注意不要让探头引线碰到它们。</p>
+  </div>
+
+  <p>空闲输入默认启用内部上拉，因此未连接的通道会稳定读为高电平，而不会拾取噪声。</p>
+
+  <div class="tip">
+    <p>8 个引脚全部位于 GPIO bank 0（GPIO0–31），因此 CPU 引擎只需一次寄存器读取即可获得全部通道。如果要重新分配引脚，尽量不要跨 bank，否则吞吐会下降。映射位于 <code>include/config.h</code> 开头几行。</p>
+  </div>
+
+  <h2 id="build">编译与烧录</h2>
+  <p>本项目使用 PlatformIO，配合支持 ESP32-P4 的 <a href="https://github.com/pioarduino/platform-espressif32">pioarduino</a> 平台。</p>
+  <pre><code>pio run -t upload</code></pre>
+  <p>串口监视：</p>
+  <pre><code>pio device monitor</code></pre>
+  <p>首次编译需要下载工具链，约 5–10 分钟。</p>
+
+  <div class="warn">
+    <p><b>在 Windows 上不要从 Git Bash / MSYS 运行 <code>pio</code>。</b>ESP-IDF 的工具安装程序会报 <code>MSys/Mingw is not supported</code> 而失败。请使用 PowerShell 或 cmd。</p>
+  </div>
+
+  <h2 id="firstrun">不接线的首次验证</h2>
+  <p>内置测试信号发生器可以在不接任何线的情况下验证整条通路。通过<a href="#" data-goto="api">远程控制 API</a>：</p>
+  <pre><code>gen ch=0 freq=1000000 duty=50
+trigger clear=1
+config engine=parlio rate=26666666 depth=2097152
+single</code></pre>
+  <p>采集结束后发送 <code>stats</code>。若 <code>stats[0].freq</code> 接近 1000000，说明 GPIO 矩阵、PARLIO、DMA 与缓冲区都工作正常。</p>
+
+</article>
+<article data-page="ui" data-section="use" data-title="界面说明">
+
+  <h1>界面说明</h1>
+  <p class="lede">1280×720 的屏幕分为五个区域。</p>
+
+  <figure>
+    <img src="img/03-zoomed.png" alt="放大后的波形，8 个通道都有信号">
+    <figcaption>放大后的混合信号采集。CH0/CH1 为 I2C，CH2 为 UART，CH3 为 PWM，CH4–CH7 为 SPI。</figcaption>
+  </figure>
+
+  <table>
+    <tr><th>区域</th><th>内容</th></tr>
+    <tr><td>顶栏</td><td>RUN / SINGLE、采样率、深度、引擎、触发模式，右端为状态显示</td></tr>
+    <tr><td>左侧列</td><td>通道名与所分配的 GPIO。<code>inv</code> 表示逻辑反相</td></tr>
+    <tr><td>波形区</td><td>时间标尺、8 条波形、2 行解码标注</td></tr>
+    <tr><td>中部面板</td><td>光标、各通道测量值、状态与提示信息</td></tr>
+    <tr><td>底栏</td><td>缩放、平移、光标操作以及各弹出面板的入口</td></tr>
+  </table>
+
+  <h2 id="statusline">右上角的状态显示</h2>
+  <p>形如 <code>CPU TRIG'D @ 5.000 MHz #2</code>。</p>
+  <ul>
+    <li><b>引擎</b> — 实际使用的采集引擎（<code>PARLIO</code> 或 <code>CPU</code>）</li>
+    <li><b>状态</b> — <code>IDLE</code> / <code>SAMPLING</code> / <code>TRIG'D</code>（已触发）/ <code>UNTRIG</code>（未触发）/ <code>FAILED</code></li>
+    <li><b>@ 速率</b> — 实际有效采样率，是硬件真正产生的值而非请求值</li>
+    <li><b>#n</b> — 采集次数</li>
+  </ul>
+
+  <h2 id="measure">如何读测量值</h2>
+  <p>中部面板的 MEASUREMENTS 是针对整段采集的各通道统计。</p>
+  <ul>
+    <li><b>频率</b> — 由上升沿平均间隔算出，不会被窗口边缘被截断的脉冲串带偏</li>
+    <li><b>占空比</b> — 仅统计完整周期内的平均高电平比例</li>
+    <li><b>边沿数</b> — 整段采集中的跳变次数</li>
+    <li>非周期信号会显示 <code>N edges  min 120 ns</code>，即观测到的最窄脉宽</li>
+  </ul>
+  <div class="tip"><p>最小脉宽可以用来判断采样率是否够用：如果它只有采样周期的 2–3 倍，就应该提高采样率。</p></div>
+
+</article>
+<article data-page="capture" data-section="use" data-title="采集与触发">
+
+  <h1>采集与触发</h1>
+  <p class="lede">采样率与深度的选择，以及触发条件的组合方式。</p>
+
+  <figure>
+    <img src="img/02-capture-64k.png" alt="以 5 MSa/s 采集 65.5 kSa 的状态">
+    <figcaption>以 5 MSa/s 采集 65.5 kSa 后的画面。</figcaption>
+  </figure>
+
+  <h2 id="rate">采样率与深度</h2>
+  <p>对于关心的最快边沿，采样率取其 <b>5–10 倍</b>为宜。采集时间为 <code>深度 ÷ 采样率</code>，显示在中部面板的 <code>window</code> 处。</p>
+  <table>
+    <tr><th>操作</th><th>作用</th></tr>
+    <tr><td>速率 <code>-</code> <code>+</code></td><td>100 kSa/s – 80 MSa/s。实际值请看状态显示中 <code>@</code> 后的数字</td></tr>
+    <tr><td>深度 <code>-</code> <code>+</code></td><td>64 kSa – 8 MSa。<b>改变深度会丢弃当前采集</b>，改变速率则不会</td></tr>
+    <tr><td><code>ENG</code></td><td><code>AUTO</code> / <code>PARLIO</code> / <code>CPU</code>。AUTO 会优先选择可用的 PARLIO</td></tr>
+  </table>
+  <div class="note"><p>采样率只能是 160 MHz 的整数分频，菜单中只列出实际可达的值（80 / 53.33 / 40 / 32 / 26.67 / 22.86 / 20 MSa/s …）。无法输出正好 24 MSa/s，请使用略高的 26.67 MSa/s。</p></div>
+
+  <h2 id="trigger">触发条件</h2>
+  <figure>
+    <img src="img/09-trigger.png" alt="触发设置面板">
+    <figcaption>Trigger 面板。每点一次通道，条件就切换一次。</figcaption>
+  </figure>
+  <ul>
+    <li>每点击一次通道按钮，条件依次切换 <code>--</code> → <code>Rise</code> → <code>Fall</code> → <code>Both</code> → <code>High</code> → <code>Low</code> → <code>--</code>。</li>
+    <li><b>边沿条件之间取或</b>，<b>电平条件之间取与</b>；两者同时存在时为「任一边沿 且 所有电平」。</li>
+    <li>例如 CH0=<code>Rise</code>、CH1=<code>Low</code> 表示「CH1 为低电平期间 CH0 出现上升沿」。</li>
+    <li><b>pre %</b> 是预触发比例。设为 25% 时屏幕左侧 1/4 为触发前的数据。</li>
+    <li><b>Clear all</b> 将所有通道恢复为 <code>--</code>。没有任何条件时相当于不触发，直接显示采到的数据。</li>
+  </ul>
+
+  <h3>触发模式</h3>
+  <table>
+    <tr><th>模式</th><th>找不到条件时</th></tr>
+    <tr><td>AUTO</td><td>照样显示</td></tr>
+    <tr><td>NORMAL</td><td>在 5 秒内反复采集并查找，期间保留上一次的画面</td></tr>
+    <tr><td>SINGLE</td><td>只采集一次然后停止</td></tr>
+  </table>
+
+  <div class="note">
+    <p>触发是软件搜索而非硬件比较器。先填满缓冲区再扫描，因此 NORMAL 模式是「采集 → 查找 → 未找到则重新采集」的循环。对周期性信号足够用，但极少出现的单次事件有可能落在两次采集之间。这是为了保证「采集过程中一个采样点都不丢」而做出的取舍。</p>
+  </div>
+
+</article>
+<article data-page="navigate" data-section="use" data-title="波形操作与光标">
+
+  <h1>波形操作与光标</h1>
+  <p class="lede">平移、缩放，以及用两条光标进行时间测量。</p>
+
+  <figure>
+    <img src="img/08-cursors.png" alt="放置了光标 A 与 B 的状态">
+    <figcaption>放置两条光标后，中部面板会显示 Δt 及其倒数（频率）。</figcaption>
+  </figure>
+
+  <table>
+    <tr><th>操作</th><th>动作</th></tr>
+    <tr><td>拖动</td><td>左右平移</td></tr>
+    <tr><td>双指缩放</td><td>以两指中点为轴缩放时间轴</td></tr>
+    <tr><td>点击</td><td>把当前光标放到该位置</td></tr>
+    <tr><td><span class="kbd">Zoom-</span> <span class="kbd">Zoom+</span></td><td>以屏幕中心为轴按 2 倍缩放</td></tr>
+    <tr><td><span class="kbd">Fit</span></td><td>把整段采集显示在屏幕内</td></tr>
+    <tr><td><span class="kbd">Auto</span></td><td>调整到最窄脉冲约为 3 像素的缩放（采集后的默认值）</td></tr>
+    <tr><td><span class="kbd">|&lt;</span> <span class="kbd">&gt;|</span></td><td>跳到开头 / 结尾</td></tr>
+    <tr><td><span class="kbd">&lt;&lt;</span> <span class="kbd">&gt;&gt;</span></td><td>每次滚动半屏</td></tr>
+    <tr><td><span class="kbd">Trig</span></td><td>跳到触发位置</td></tr>
+    <tr><td><span class="kbd">Cur A</span> <span class="kbd">Cur B</span></td><td>选择点击时要放置哪条光标，当前选中的会高亮</td></tr>
+    <tr><td><span class="kbd">Clr</span></td><td>清除光标</td></tr>
+  </table>
+
+  <h2 id="autoscale">采集后为什么不是显示全体</h2>
+  <p>把整段采集塞进波形区，意味着用大约 1180 像素画 2 MSa，即每列约 1700 个采样点。这样所有通道都会变成实心色块，完全看不出信号形状。</p>
+  <p>因此采集完成后会根据数据自动选择缩放：<b>让整段采集中最窄的脉冲约占 3 个像素</b>，这是所有通道都还能保持形状的最粗倍率。想看全局时按 <span class="kbd">Fit</span>，想回到自动缩放时按 <span class="kbd">Auto</span>。</p>
+
+  <h2 id="lod">为什么缩小后毛刺不会消失</h2>
+  <p>如果简单地把 8 MSa 抽取到约 1150 列，单个采样点的毛刺就会消失，逻辑分析仪也就失去了意义。</p>
+  <p>因此每次采集完成后都会构建 <b>(OR, AND) 摘要金字塔</b>。OR 表示「是否曾经为高」，AND 表示「是否始终为高」，所以无论缩小多少，单个采样点的尖峰仍会以「同时存在高与低」的形式显示为一条竖线。这是<b>不损失信息的抽取</b>。</p>
+
+</article>
+<article data-page="channels" data-section="use" data-title="通道设置">
+
+  <h1>通道设置</h1>
+  <p class="lede">显示开关与逻辑反相。</p>
+
+  <figure>
+    <img src="img/10-channels.png" alt="通道设置面板">
+    <figcaption>Channels 面板。</figcaption>
+  </figure>
+
+  <ul>
+    <li><b>SHOWN / hidden</b> — 隐藏某个通道后，其余通道的显示高度会变大，适合集中观察两三条信号。</li>
+    <li><b>INVERTED / normal</b> — 逻辑反相，用于开漏信号或反相探头。波形、测量值以及 CSV、VCD 导出都会同步反映。</li>
+  </ul>
+  <p>通道名下方显示所分配的 GPIO，处于反相状态的通道在左侧列会标注 <code>inv</code>。</p>
+
+</article>
+<article data-page="decode" data-section="use" data-title="协议解码">
+
+  <h1>协议解码</h1>
+  <p class="lede">在波形下方叠加显示 UART / I2C / SPI 的解码结果。</p>
+
+  <figure>
+    <img src="img/11-decode-options.png" alt="解码器设置面板">
+    <figcaption>Decode 面板。修改任何选项都会立即重新解码。</figcaption>
+  </figure>
+
+  <h2 id="i2c">I2C</h2>
+  <figure>
+    <img src="img/05-decode-i2c.png" alt="I2C 解码结果">
+    <figcaption>地址 <code>50 W</code> 之后是数据 <code>50 5A 3C</code>，下一行为 ACK（<code>A</code>）/ NAK（<code>N</code>）。</figcaption>
+  </figure>
+  <p>只需分配 SCL 与 SDA 两个通道。上行显示 <code>START</code> / <code>Sr</code>（重复起始）/ <code>STOP</code>、带 R/W 位的地址以及数据字节。</p>
+
+  <h2 id="uart">UART</h2>
+  <figure>
+    <img src="img/06-decode-uart.png" alt="UART 解码结果">
+    <figcaption>数据字节 <code>4C 'L'</code>、<code>41 'A'</code>，下一行为 <code>S</code>（起始）/ <code>T</code>（停止）。</figcaption>
+  </figure>
+  <table>
+    <tr><th>项目</th><th>说明</th></tr>
+    <tr><td>Line</td><td>信号所在通道</td></tr>
+    <tr><td>Baud</td><td><code>auto</code> 或固定值。auto 会把观测到的最窄脉冲当作 1 个比特来推算</td></tr>
+    <tr><td>Data bits</td><td>5–9</td></tr>
+    <tr><td>Parity</td><td>N / E / O</td></tr>
+    <tr><td>Stop bits</td><td>1 或 2</td></tr>
+    <tr><td>Polarity</td><td>普通 TTL 串口为 <code>idle high</code>；使用反相探头时选 <code>inverted</code></td></tr>
+    <tr><td>Bit order</td><td>通常为 LSB first</td></tr>
+  </table>
+  <p>停止位不为高的帧会以红色标为 <code>T!</code>，该字节也用错误色显示。此时解码器不再信任位时钟，而是在下一个边沿重新同步，因此一个坏字节不会破坏整条数据流。</p>
+  <div class="note"><p>自动波特率的前提是至少存在一个 1 比特宽的脉冲。全是 <code>0x00</code> 或 <code>0xFF</code> 的数据流会推算错误，这时请指定固定波特率。</p></div>
+
+  <h2 id="spi">SPI</h2>
+  <figure>
+    <img src="img/07-decode-spi.png" alt="SPI 解码结果">
+    <figcaption>上行为 MOSI，下行为 MISO。<code>CS\</code> / <code>CS/</code> 表示片选与取消片选。</figcaption>
+  </figure>
+  <p>CLK 为必填，MOSI / MISO / CS 可用 <code>--</code> 关闭。CS 设为 <code>--</code> 时视为始终选中。采样边沿由 CPOL / CPHA 决定（CPOL 等于 CPHA 时在上升沿采样）。</p>
+
+</article>
+<article data-page="save" data-section="use" data-title="保存与导出">
+
+  <h1>保存与导出</h1>
+  <p class="lede">向 microSD 导出 CSV / VCD / 解码结果 / 屏幕截图。</p>
+
+  <figure>
+    <img src="img/12-save.png" alt="保存面板">
+    <figcaption>Save 面板。首次访问时会自动挂载存储卡。</figcaption>
+  </figure>
+
+  <table>
+    <tr><th>按钮</th><th>输出</th><th>内容</th></tr>
+    <tr><td>Save CSV (view)</td><td><code>/la/capNNNN.csv</code></td><td><b>仅当前视图范围</b>，每个采样点一行。时间以触发点为基准</td></tr>
+    <tr><td>Save VCD (all)</td><td><code>/la/capNNNN.vcd</code></td><td>整段采集，仅记录电平变化点</td></tr>
+    <tr><td>Save decode</td><td><code>/la/decNNNN.txt</code></td><td>解码结果，以制表符分隔</td></tr>
+    <tr><td>Screenshot BMP</td><td><code>/la/shotNNNN.bmp</code></td><td>整屏 24 位 BMP</td></tr>
+  </table>
+
+  <div class="note"><p>CSV 之所以只导出当前视图，是因为完整的 8 MSa 会达到几十 MB，写入需要好几分钟。需要完整数据时请使用 VCD——它只记录跳变点，体积要小几个数量级。</p></div>
+
+  <h2 id="pulseview">用 PulseView / GTKWave 打开</h2>
+  <ol>
+    <li>把 VCD 复制到电脑</li>
+    <li>在 PulseView 中选择 <i>Import Value Change Dump data</i></li>
+    <li>随后即可使用 sigrok 丰富的解码器</li>
+  </ol>
+  <p>时间刻度会自动选取「每个采样点至少 10 个刻度」条件下最粗的单位，因此改变采样率也不会损失分辨率。</p>
+
+</article>
+<article data-page="api" data-section="api" data-title="远程控制 API">
+
+  <h1>远程控制 API</h1>
+  <p class="lede">用于烧录的 USB CDC 端口同时也是行式控制 API：发送一行，返回一行 JSON。</p>
+
+  <div class="warn">
+    <p><b>请勿操作 DTR / RTS。</b>在 ESP32 的 USB-Serial-JTAG 上，这两根线直接连到复位与启动引脚，翻转它们会使开发板进入 ROM 引导程序并停止响应。打开串口时请让两者保持 false。</p>
+  </div>
+
+  <p>日志输出已经调低，但 ESP-IDF 在启动时仍会输出几行。<b>请忽略所有不以 <code>{</code> 开头的行。</b></p>
+  <p>命令在两次采集<b>之间</b>处理。采集期间会阻塞，因此在扫描途中发送的 <code>stop</code> 会在下一次扫描前生效。</p>
+
+  <h2 id="api-basic">基本命令</h2>
+  <table>
+    <tr><th>命令</th><th>用途</th></tr>
+    <tr><td><code>ping</code></td><td>连通性确认与固件信息</td></tr>
+    <tr><td><code>status</code></td><td>完整状态快照。多数命令都返回相同结构</td></tr>
+    <tr><td><code>run</code> / <code>single</code> / <code>stop</code></td><td>连续采集 / 单次采集 / 停止</td></tr>
+    <tr><td><code>config [rate=Hz] [depth=samples] [engine=auto|parlio|cpu]</code></td><td><code>rate</code> 会吸附到菜单中最接近的值，<code>depth</code> 向上取整到 2 的幂</td></tr>
+    <tr><td><code>trigger [mode=] [pos=] [chN=off|rise|fall|both|high|low] [clear=1]</code></td><td>触发条件</td></tr>
+    <tr><td><code>channel n=0-7 [on=0|1] [inv=0|1]</code></td><td>显示与逻辑反相</td></tr>
+  </table>
+  <pre><code>&gt; ping
+{"ok":true,"fw":"0.1.0","api":1,"board":22,"channels":8,"parlio_built":true,"cpu_mhz":360}</code></pre>
+
+  <h2 id="api-read">读取波形</h2>
+  <table>
+    <tr><th>命令</th><th>用途</th></tr>
+    <tr><td><code>stats</code></td><td>各通道的频率、占空比、边沿数与最小脉宽</td></tr>
+    <tr><td><code>edges ch=N [from=] [count=]</code></td><td><b>自动化时的首选。</b>只返回跳变位置，比原始采样小几个数量级。每次最多 2048 个</td></tr>
+    <tr><td><code>read [from=] [count=]</code></td><td>以十六进制返回原始采样，每个采样 1 字节，bit N 对应通道 N。每次最多 4096 个</td></tr>
+    <tr><td><code>ann [from=] [count=]</code></td><td>解码结果，每次最多 512 条</td></tr>
+  </table>
+  <pre><code>&gt; edges ch=0 count=8
+{"ok":true,"ch":0,"from":0,"level":1,"sec_per_sample":3.75e-08,
+ "edges":[13,27,40,54,67,81,94,108],"next":109,"more":true}</code></pre>
+
+  <h2 id="api-decode">解码器</h2>
+  <pre><code>decode kind=i2c scl=0 sda=1
+decode kind=uart line=2 baud=auto bits=8 parity=n stop=1
+decode kind=spi clk=4 mosi=5 miso=6 cs=7 cpol=0 cpha=0 order=msb bits=8</code></pre>
+  <p>任何改动都会触发重新解码。<code>mosi</code> / <code>miso</code> / <code>cs</code> 可以设为 <code>-1</code> 以关闭该通道。</p>
+
+  <h2 id="api-gen">内置测试信号发生器</h2>
+  <p><code>gen ch=N [freq=Hz] [duty=0..100]</code> 会用 LEDC 驱动该通道的引脚，同时仍然对其采样，因此<b>不接任何线也能验证整条通路</b>。</p>
+  <pre><code>&gt; gen ch=0 freq=1000000 duty=50
+{"ok":true,"gen":"on","ch":0,"pin":2,"freq":1000000,"duty":50,"res_bits":5}
+&gt; gen off=1</code></pre>
+  <p><code>res_bits</code> 是 LEDC 的分辨率，频率越高该值越小。占空比的量化步长为 1/2<sup>res_bits</sup>，因此高频时无法得到正好 50%（<code>res_bits=5</code> 时为 15/32 = 46.9%）。</p>
+
+  <h2 id="api-example">PowerShell 辅助脚本</h2>
+  <pre><code>$p = New-Object System.IO.Ports.SerialPort "COM6",115200,None,8,one
+$p.DtrEnable = $false   # 必须：翻转会使开发板进入引导程序
+$p.RtsEnable = $false
+$p.NewLine = "`n"
+$p.Open()
+
+function Send-Cmd([string]$c) {
+  $p.WriteLine($c)
+  $sb = New-Object System.Text.StringBuilder
+  $deadline = (Get-Date).AddSeconds(15)
+  while ((Get-Date) -lt $deadline) {
+    $null = $sb.Append($p.ReadExisting())
+    foreach ($ln in ($sb.ToString() -split "`n")) {
+      $t = $ln.Trim()
+      if ($t.StartsWith('{') -and $t.EndsWith('}')) { return $t | ConvertFrom-Json }
+    }
+    Start-Sleep -Milliseconds 15
+  }
+}
+
+Send-Cmd 'ping'</code></pre>
+  <p>完整命令说明见 <a href="API.md">docs/API.md</a>。</p>
+
+</article>
+<article data-page="arch" data-section="how" data-title="架构">
+
+  <h1>架构</h1>
+  <p class="lede">采集引擎、触发与渲染的设计及其理由。</p>
+
+  <pre><code>main.cpp
+  &#9492;&#9472; App                            应用状态机 + 触摸 UI
+       &#9500;&#9472; ISampler                  采集引擎抽象
+       &#9474;    &#9500;&#9472; SamplerParlio        PARLIO RX + GDMA
+       &#9474;    &#9492;&#9472; SamplerCpu           GPIO 轮询循环
+       &#9500;&#9472; CaptureBuffer             PSRAM 采样存储 + LOD 金字塔
+       &#9500;&#9472; findTrigger()             触发条件的软件搜索
+       &#9500;&#9472; measureChannels()          各通道频率/占空比/边沿
+       &#9500;&#9472; runDecoder()               UART / I2C / SPI
+       &#9500;&#9472; WaveformView               波形、标尺、标注、光标
+       &#9492;&#9472; Exporter                   microSD 上的 CSV / VCD / txt / BMP</code></pre>
+
+  <h2 id="format">采样存储格式</h2>
+  <p>每个采样占 1 字节，bit N 对应通道 N。把 8 个通道压进 1 字节的好处是</p>
+  <ul>
+    <li>正好与 PARLIO 的 <code>data_width = 8</code> 对应；</li>
+    <li>CPU 引擎的位重排只需几条指令；</li>
+    <li>触发搜索、测量与解码全都变成对字节数组的扫描。</li>
+  </ul>
+  <p>即使深度为 8 MSa 也只有 8 MB，Tab5 的 32 MB PSRAM 绰绰有余。</p>
+
+  <h2 id="parlio">PARLIO 引擎</h2>
+  <p>ESP32-P4 的 PARLIO 接收器在内部分频时钟的每个边沿锁存 8 路输入，并通过 GDMA 写入内存。全程不占用 CPU，因此没有抖动。</p>
+  <p>设计上最大的约束是驱动<b>拒绝位于内部 RAM 之外的 DMA 载荷</b>。因此在内部 RAM 中开辟 191 KiB 的环形缓冲区，并挂上 <code>partial_rx_en</code> 的<b>无限事务</b>。由于描述符链是循环的，硬件在块之间一次都不会停顿。</p>
+  <p>数据如何离开这个环形缓冲区，决定了可达到的采样率。</p>
+  <table>
+    <tr><th>模式</th><th>条件</th><th>特点</th></tr>
+    <tr><td><b>direct</b></td><td>深度 ≤ 191 kSa</td><td>采集期间完全不复制，没有任何实时约束，速率仅受外设本身限制</td></tr>
+    <tr><td><b>stream</b></td><td>深度 &gt; 191 kSa</td><td>每个描述符完成时在中断中复制到 PSRAM，复制必须跟得上采样率</td></tr>
+  </table>
+
+  <h2 id="cpu">CPU 引擎</h2>
+  <p>直接读取 GPIO 输入寄存器，并用编译期从 config.h 的引脚映射展开的移位序列压成 1 字节。默认映射下所有通道都在 bank 0，因此只需一次寄存器读取。</p>
+  <p>节拍控制不使用延时循环，而是用 RISC-V 的周期计数器：为每个采样计算截止时刻并自旋等待。当请求速率超过循环极限时，截止时刻总在过去，循环自然进入自由运行，并返回<b>实测速率</b>。这正是时间轴不会说谎的原因。</p>
+  <p>中断以约 2 ms 为单位分段屏蔽。若在长达数秒的采集中始终屏蔽，时钟节拍与看门狗都会失效，因此接受在分段边界出现一个很小的（并已报告的）间隙。</p>
+
+  <h2 id="trig-impl">触发</h2>
+  <p>没有硬件触发，因此采用<b>先填满缓冲区再查找条件</b>的方式。<code>TriggerConfig</code> 会折叠成 4 个位掩码（上升 / 下降 / 高电平 / 低电平），使搜索循环每个采样只需几条指令。</p>
+  <p>搜索从预触发长度之后的位置开始，这样可以保证找到的位置之前一定有所要求的预触发长度。</p>
+
+  <h2 id="lod-impl">LOD 金字塔</h2>
+  <p>采集完成时构建 (OR, AND) 摘要金字塔。第 0 层把 64 个采样折叠为 1 项，之后每层再折半。内存开销为 2 字节 × (N/64) × 2 ≈ N/16 字节，即使 8 MSa 也只有约 512 KB。</p>
+  <p>放大到每像素不足 1 个采样时则绕过金字塔，直接用真实采样绘制阶梯波形。</p>
+
+</article>
+<article data-page="perf" data-section="how" data-title="实测性能">
+
+  <h1>实测性能</h1>
+  <p class="lede">M5Stack Tab5 实机（ESP32-P4 rev v1.3 / 360 MHz / PSRAM 32MB）的测量结果。</p>
+
+  <p>用内置发生器在 CH0 输出 1 MHz 方波，以深度 2 MSa 采集的结果。</p>
+  <table>
+    <tr><th>请求速率</th><th class="num">有效速率</th><th class="num">采集点数</th><th class="num">1 MHz 测得</th><th class="num">误差</th><th class="num">复制中断占用</th></tr>
+    <tr><td>20 MSa/s</td><td class="num">20.00</td><td class="num">2097152</td><td class="num">1.00 MHz</td><td class="num">0.00%</td><td class="num">20%</td></tr>
+    <tr><td>22.86 MSa/s</td><td class="num">22.86</td><td class="num">2097152</td><td class="num">1.00 MHz</td><td class="num">0.00%</td><td class="num">22%</td></tr>
+    <tr><td><b>26.67 MSa/s</b></td><td class="num"><b>26.67</b></td><td class="num">2097152</td><td class="num">1.00 MHz</td><td class="num">0.00%</td><td class="num"><b>26%</b></td></tr>
+    <tr><td>32 MSa/s</td><td class="num">32.00</td><td class="num">2097152</td><td class="num">1.00 MHz</td><td class="num">0.00%</td><td class="num">31%</td></tr>
+    <tr><td>40 MSa/s</td><td class="num">40.00</td><td class="num">2097152</td><td class="num">1.00 MHz</td><td class="num">0.00%</td><td class="num">39%</td></tr>
+    <tr><td>53.33 MSa/s</td><td class="num">53.33</td><td class="num">2097152</td><td class="num">1.00 MHz</td><td class="num">0.00%</td><td class="num">52%</td></tr>
+    <tr><td>80 MSa/s</td><td class="num">80.00</td><td class="num">2097152</td><td class="num">1.00 MHz</td><td class="num">0.00%</td><td class="num">77%</td></tr>
+  </table>
+
+  <div class="tip"><p><b>性能超过 24 MSa/s 的 FX2LP 类廉价逻辑分析仪。</b>在 26.67 MSa/s 时复制中断占用仅 26%，深度也已验证到 2 MSa，并且边沿数与理论值完全一致，没有任何丢失。</p></div>
+
+  <div class="warn"><p>80 MSa/s 也能工作，但中断占用达 77% 已无余量，因此日常使用建议 <b>40 MSa/s 以下</b>。占用超过 80% 时 Info 面板会显示 <code>OVERRUN RISK</code>。</p></div>
+
+  <h2 id="perf-input">输入频率实测</h2>
+  <p>用内置发生器输出方波，以 80 MSa/s、深度 131072 采集的结果。</p>
+  <table>
+    <tr><th class="num">发生频率</th><th class="num">每周期采样数</th><th class="num">测得值</th><th class="num">边沿数</th><th>判定</th></tr>
+    <tr><td class="num">1.00 MHz</td><td class="num">80</td><td class="num">1.00 MHz</td><td class="num">3279</td><td>与理论一致</td></tr>
+    <tr><td class="num">1.95 MHz</td><td class="num">40</td><td class="num">1.95 MHz</td><td class="num">6379</td><td>一致</td></tr>
+    <tr><td class="num">4.91 MHz</td><td class="num">16</td><td class="num">4.91 MHz</td><td class="num">16092</td><td>一致</td></tr>
+    <tr><td class="num">9.74 MHz</td><td class="num">8</td><td class="num">9.74 MHz</td><td class="num">31908</td><td>一致</td></tr>
+    <tr><td class="num">12.96 MHz</td><td class="num">6</td><td class="num">12.96 MHz</td><td class="num">42449</td><td>一致</td></tr>
+    <tr><td class="num"><b>19.44 MHz</b></td><td class="num"><b>4.1</b></td><td class="num"><b>19.44 MHz</b></td><td class="num"><b>63695 / 63696</b></td><td>连续两次一致</td></tr>
+  </table>
+  <p>发生频率之所以不是整数，是因为 LEDC 的分频带小数，并非分析仪一侧的误差——同样的数值会反复重现。</p>
+  <div class="note"><p><b>19.44 MHz 以上尚未测量</b>，因为内置 LEDC 无法产生更高频率，需要外部信号源。这并不是外设的上限。</p></div>
+
+  <h2 id="perf-channels">通道映射验证</h2>
+  <p>依次在单个通道上输出 1 MHz，以 20 MSa/s、深度 131072 采集。理论边沿数为 13107。</p>
+  <table>
+    <tr><th>驱动通道</th><th>GPIO</th><th>有响应的通道</th><th class="num">测得值</th><th class="num">边沿数</th></tr>
+    <tr><td>CH0</td><td>G2</td><td>仅 CH0</td><td class="num">1.00 MHz</td><td class="num">13106</td></tr>
+    <tr><td>CH1</td><td>G3</td><td>仅 CH1</td><td class="num">1.00 MHz</td><td class="num">13107</td></tr>
+    <tr><td>CH2</td><td>G4</td><td>仅 CH2</td><td class="num">1.00 MHz</td><td class="num">13111</td></tr>
+    <tr><td>CH3</td><td>G5</td><td>仅 CH3</td><td class="num">1.00 MHz</td><td class="num">13111</td></tr>
+    <tr><td>CH4</td><td>G16</td><td>仅 CH4</td><td class="num">1.00 MHz</td><td class="num">13114</td></tr>
+    <tr><td>CH5</td><td>G17</td><td>仅 CH5</td><td class="num">1.00 MHz</td><td class="num">13107</td></tr>
+    <tr><td>CH6</td><td>G18</td><td>仅 CH6</td><td class="num">1.00 MHz</td><td class="num">13111</td></tr>
+    <tr><td>CH7</td><td>G19</td><td>仅 CH7</td><td class="num">1.00 MHz</td><td class="num">13111</td></tr>
+  </table>
+  <p>没有通道错位，也没有串扰。触发也已在实机验证：<code>ch3=rise</code>、预触发 25% 时触发位置为 32770（正好在 32768 边界之后），对空闲线路施加 <code>ch5=rise</code> 则正确返回 <code>-1</code>。</p>
+
+  <h2 id="perf-cpu">CPU 引擎的实力</h2>
+  <p>请求 5 MSa/s 时实测 <b>2.811 MSa/s</b>，并把 200 kHz 的信号测为 200.06 kHz（误差 0.03%）——由于返回的是实测速率，时间轴依然正确。折算下来每个采样约 128 个时钟周期，主要开销在 PSRAM 写入。</p>
+  <div class="note"><p><b>可以把 2.8 MSa/s 视为 CPU 引擎的上限。</b>它是 PARLIO 不可用时的后备方案，不适合日常使用。</p></div>
+
+  <h2 id="perf-todo">尚未验证的项目</h2>
+  <table>
+    <tr><th>项目</th><th>状态</th></tr>
+    <tr><td>microSD 导出</td><td><b>未验证。</b>CSV / VCD / BMP 的写入代码一次都没有执行过</td></tr>
+    <tr><td>实机触摸操作</td><td>未确认。UI 操作只在模拟器中用合成触摸事件验证过</td></tr>
+    <tr><td>实际电路测量</td><td>目前全部为内部回环，实际接线、接地与信号完整性尚未验证</td></tr>
+    <tr><td>真实总线的解码</td><td>仅使用合成波形，但已确认对垃圾输入不会崩溃</td></tr>
+    <tr><td>19.44 MHz 以上的输入</td><td>受内置发生器限制，未测量</td></tr>
+  </table>
+
+  <h2 id="perf-naming">如何称呼</h2>
+  <table>
+    <tr><th>指标</th><th class="num">数值</th><th>依据</th></tr>
+    <tr><td><b>采样率</b></td><td class="num"><b>80 MSa/s</b>（8 通道同时）</td><td>实测，边沿数与理论一致</td></tr>
+    <tr><td>建议常用速率</td><td class="num">40 MSa/s 以下</td><td>80 MSa/s 时复制中断占用 77%，余量不足</td></tr>
+    <tr><td>最小可检测脉宽</td><td class="num">12.5 ns @ 80 MSa/s</td><td>1 个采样周期</td></tr>
+    <tr><td>已验证的输入频率</td><td class="num">19.44 MHz</td><td>上述实测，更高频率未测量</td></tr>
+    <tr><td>实用信号频率</td><td class="num">8–20 MHz</td><td>保证 5–10 倍过采样时</td></tr>
+  </table>
+  <p>廉价逻辑分析仪标称「24MHz」时，这个 24 指的是采样率。按同样的说法，本机相当于 <b>80MHz</b>。但「80 MHz」容易被误读为「可以测量 80 MHz 的信号」，因此<b>建议连单位一起写成 <code>80 MSa/s</code></b>。</p>
+
+  <h2 id="perf-notes">测量注意事项</h2>
+  <ul>
+    <li><b>时间轴直接使用硬件分频值。</b>用挂钟测量会因为包含启动与停止处理而偏长约 1%，该数值仅用于诊断显示。</li>
+    <li>可测量的信号频率与采样率不同。要准确定位边沿需要 5–10 倍过采样，因此 40 MSa/s 适用于 4–8 MHz，20 MSa/s 适用于 2–4 MHz。</li>
+    <li>CPU 引擎的上限由循环速度决定，显示的是实测值。它是 PARLIO 不可用时的后备方案。</li>
+  </ul>
+
+</article>
+<article data-page="sim" data-section="dev" data-title="模拟器">
+
+  <h1>浏览器模拟器</h1>
+  <p class="lede">无需实机即可运行 UI，并重新生成本手册中的所有截图。</p>
+
+  <p>本手册中的所有截图都是<b>把实机 UI 代码编译成 WebAssembly 后生成的</b>，不是效果图。<code>WaveformView</code>、<code>App</code>、解码器、测量与 LOD 金字塔与固件使用完全相同的源码。</p>
+
+  <h2 id="sim-how">工作原理</h2>
+  <p>基于 <a href="https://github.com/airpocket-soundman/web-simulator-for-lvgl">web-simulator-for-lvgl</a> 的 M5GFX 兼容后端。该兼容层只提供像素、矩形与直线，因此 UI 所需的其余部分由 <code>sim/</code> 补齐。</p>
+  <ul>
+    <li><code>sim/sim_gfx.cpp</code> — 文本绘制、圆角矩形与三角形。字体由 <code>sim/tools/make_font.py</code> 把 Consolas 位图化而来，字宽与 M5GFX 的 Font2/Font4 一致，因此标签不会溢出按钮。</li>
+    <li><code>sim/shim/</code> — M5Unified、Arduino、esp_heap_caps、esp_log 的最小桩实现。</li>
+    <li><code>sim/sim_sampler.cpp</code> — 生成合成波形的 <code>ISampler</code>，场景中 I2C / UART / PWM / SPI 同时运行。</li>
+  </ul>
+  <p>UI 代码不直接使用 <code>M5GFX</code>，而是使用 <code>include/gfx.h</code> 中的 <code>LaGfx</code>，因此同一份源码可以同时用于固件与模拟器。</p>
+
+  <h2 id="sim-build">构建</h2>
+  <p>生成可交互的 HTML：</p>
+  <pre><code>&amp; ..\web-simulator-for-lvgl\lvgl-sim.ps1 build .</code></pre>
+  <p>会生成 <code>build/lvgl-simulator/m5tab5-logic-analyzer.html</code>，无需服务器即可直接在浏览器中打开。</p>
+
+  <p>重新生成截图：</p>
+  <pre><code>pwsh sim/tools/build_shots.ps1</code></pre>
+  <p>把同样的源码编译成无界面的 Node 程序，用脚本化的触摸操作把 13 张图写入 <code>docs/img/</code>。<b>由于是脚本驱动，每次运行得到的图片完全相同。</b></p>
+
+  <h2 id="sim-found">模拟器发现的实机缺陷</h2>
+  <p>在截图过程中发现了两个同样存在于实机上的 UI 缺陷。</p>
+  <ul>
+    <li><b>点击面板的 Close 会留下光标</b> — 按钮处理完按下事件后，抬起事件穿透到了波形区。通过记录「按下已被消费」解决。</li>
+    <li><b>点击后的第一帧绘制的是按钮的旧状态</b> — 按钮数组是在输入处理<i>之前</i>构建的。改为在绘制前重新构建。</li>
+  </ul>
+
+  <div class="note"><p>模拟器是 UI 预览，而不是开发板模拟器。PARLIO、microSD 与串口 API 都无法工作（Save 面板会如实提示浏览器中没有 microSD）。</p></div>
+
+</article>
+<article data-page="trouble" data-section="dev" data-title="故障排查">
+
+  <h1>故障排查</h1>
+  <p class="lede">请先查看 Info 面板。</p>
+
+  <figure>
+    <img src="img/13-info.png" alt="Info 面板">
+    <figcaption>Info 面板会显示引擎选择结果、上一次的采集模式、内存以及引脚分配。</figcaption>
+  </figure>
+
+  <table>
+    <tr><th>现象</th><th>需要确认的事项</th></tr>
+    <tr><td>所有通道一直为高</td><td>探头悬空，内部上拉在起作用。是否与被测电路共地？</td></tr>
+    <tr><td>波形毛糙</td><td>采样率不足。提高到信号的 5–10 倍；最小脉宽的测量值可作参考</td></tr>
+    <tr><td>一直显示 <code>UNTRIG</code></td><td>触发条件过严。用 Trigger → <b>Clear all</b> 取消条件先看原始波形</td></tr>
+    <tr><td>没有选中 PARLIO</td><td>在 Info 中确认原因。若内部 RAM 不足则降低深度</td></tr>
+    <tr><td>出现 <code>OVERRUN RISK</code></td><td>降低采样率，或把深度降到 191 kSa 以下以进入 direct 模式</td></tr>
+    <tr><td>无法保存到 SD 卡</td><td>确认 Save 面板显示的错误信息，并使用 FAT32 格式化的卡</td></tr>
+    <tr><td>速率低于预期</td><td>确认 ENG 是否变成了 <code>CPU</code>。该引擎的上限由循环速度决定</td></tr>
+    <tr><td>API 没有响应</td><td>是否碰了 DTR / RTS？碰了会进入引导程序。用 <code>esptool --after hard-reset chip-id</code> 恢复</td></tr>
+    <tr><td>PlatformIO 工具安装失败</td><td>是否从 Git Bash / MSYS 运行？请使用 PowerShell 或 cmd</td></tr>
+  </table>
+
+</article>
+
+</main>
+
+<script>window.SITE_SECTIONS = [{"id": "start", "label": "开始"}, {"id": "use", "label": "使用"}, {"id": "api", "label": "API"}, {"id": "how", "label": "原理"}, {"id": "dev", "label": "开发"}];</script>
+<script src="assets/site.js"></script>
+</body>
+</html>

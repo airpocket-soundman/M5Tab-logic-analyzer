@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M5Tab5 Logic Analyzer — ドキュメント</title>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<header>
+  <button id="menuToggle" aria-label="目次">&#9776;</button>
+  <div class="brand"><a href="https://github.com/airpocket-soundman/M5Tab-logic-analyzer">M5Tab5 Logic Analyzer</a><small>8ch / 最大 80 MSa/s / ESP32-P4</small></div>
+  <nav class="main" id="mainNav"></nav>
+  <div class="langs"><a href="index.html" data-file="index.html" aria-current="true">日本語</a><a href="en.html" data-file="en.html">English</a><a href="zh.html" data-file="zh.html">中文</a></div>
+  <a class="repo" href="https://github.com/airpocket-soundman/M5Tab-logic-analyzer">v0.1.0 &#183; GitHub</a>
+</header>
+
+<aside>
+  <div class="toc-title" id="tocTitle">目次</div>
+  <ul id="toc"></ul>
+</aside>
+
+<main id="content">
+
+<article data-page="overview" data-section="start" data-title="概要">
+<h1>概要</h1>
+  <p class="lede">M5Stack Tab5 (ESP32-P4) を 8 チャンネルのロジックアナライザーにするファームウェアです。5 インチのタッチパネル上で、取り込みからトリガ、波形観察、プロトコルデコード、microSD への書き出しまでが完結します。</p>
+
+  <figure>
+    <img src="img/01-overview.png" alt="メイン画面。8チャンネルの波形と測定値が並ぶ">
+    <figcaption>取り込み直後のメイン画面。2.1 MSa の取り込みでも、自動スケールにより信号パターンがそのまま読めます。</figcaption>
+  </figure>
+
+  <h2 id="highlights">できること</h2>
+  <div class="cards">
+    <div class="card"><div class="big">80 MSa/s</div><p>PARLIO + DMA による実測最大サンプリングレート。8ch 同時。</p></div>
+    <div class="card"><div class="big">8 MSa</div><p>PSRAM 上の最大取り込み深度。1 サンプル 1 バイト。</p></div>
+    <div class="card"><div class="big">3 種</div><p>UART / I2C / SPI のプロトコルデコーダを内蔵。</p></div>
+    <div class="card"><div class="big">0.00%</div><p>1 MHz 基準信号に対する周波数測定誤差 (実測)。</p></div>
+  </div>
+
+  <table>
+    <tr><th>分類</th><th>内容</th></tr>
+    <tr><td>取り込み</td><td>8ch、深度 64 kSa 〜 8 MSa、レート 100 kSa/s 〜 80 MSa/s</td></tr>
+    <tr><td>エンジン</td><td><b>PARLIO</b> (DMA・高速) と <b>CPU</b> (ポーリング・フォールバック) を自動選択</td></tr>
+    <tr><td>トリガ</td><td>ch ごとに Rise / Fall / Both / High / Low。エッジは OR、レベルは AND。プリトリガ 0〜95%</td></tr>
+    <tr><td>表示</td><td>ピンチズーム、ドラッグパン、LOD による高速描画 (ズームアウトしても 1 サンプルのグリッチが消えない)</td></tr>
+    <tr><td>測定</td><td>ch ごとに 周波数・デューティ・エッジ数・最小 High/Low 幅</td></tr>
+    <tr><td>デコーダ</td><td>UART (オートボー対応) / I2C / SPI</td></tr>
+    <tr><td>保存</td><td>CSV (表示範囲) / VCD (全体、PulseView・GTKWave 対応) / デコード結果 / 画面 BMP</td></tr>
+    <tr><td>リモート制御</td><td>USB CDC 経由の行指向 JSON API</td></tr>
+  </table>
+
+  <h2 id="compare">格安ロジアナとの比較</h2>
+  <p>2000 円クラスの FX2LP (CY7C68013A) 系ロジックアナライザーは 8ch / 24 MSa/s を謳います。実測での位置づけは次のとおりです。</p>
+  <table>
+    <tr><th></th><th>FX2LP 系 (2000円クラス)</th><th>本機</th></tr>
+    <tr><td>チャンネル数</td><td>8</td><td>8</td></tr>
+    <tr><td>最大レート</td><td>24 MSa/s (公称)</td><td><b>80 MSa/s (実測)</b></td></tr>
+    <tr><td>取り込み深度</td><td>USB ストリーミング (ホスト依存)</td><td>8 MSa (本体内)</td></tr>
+    <tr><td>表示</td><td>PC ソフト必須</td><td>本体で完結</td></tr>
+    <tr><td>デコード</td><td>sigrok の豊富なデコーダ</td><td>UART / I2C / SPI</td></tr>
+  </table>
+  <div class="note"><p>デコーダの種類では sigrok に遠く及びません。VCD で書き出せば PulseView に読み込めるので、本体で捕まえて PC で解析、という使い分けが現実的です。</p></div>
+
+  <h2 id="limits">制約</h2>
+  <ul>
+    <li><b>入力は 3.3V ロジック専用</b>です。分圧やレベルシフタなしで 5V 以上を入れると壊れます。</li>
+    <li><b>トリガはソフトウェア検索</b>です。バッファを埋めてから条件を探すため、めったに起きない単発イベントは取り逃す可能性があります。</li>
+    <li>レートは 160 MHz の整数分周でしか出せません (80 / 53.33 / 40 / 32 / 26.67 / 22.86 / 20 MSa/s ...)。</li>
+    <li>アナログ測定はできません。デジタルの High/Low のみです。</li>
+  </ul>
+</article>
+<article data-page="setup" data-section="start" data-title="セットアップ">
+<h1>セットアップ</h1>
+  <p class="lede">プローブの配線、ビルド、書き込みまで。</p>
+
+  <h2 id="wiring">プローブの配線</h2>
+  <p>プローブは Tab5 の <b>M5-Bus ヘッダ (2×15, 30 ピン)</b> に出します。</p>
+
+  <figure>
+    <img src="img/m5bus-pinout.svg" alt="M5-Bus ヘッダのピン配置。プローブに使う8本を波形と同じ色で示している" style="background:#0f1216">
+    <figcaption>M5-Bus のピン配置。CH0〜CH7 は波形表示と同じ色で示しています。</figcaption>
+  </figure>
+
+  <table>
+    <tr><th>ch</th><th>GPIO</th><th>M5-Bus ピン</th><th>備考</th></tr>
+    <tr><td>CH0</td><td>G2</td><td class="num">21</td><td>汎用 GPIO</td></tr>
+    <tr><td>CH1</td><td>G3</td><td class="num">19</td><td>汎用 GPIO</td></tr>
+    <tr><td>CH2</td><td>G4</td><td class="num">20</td><td>汎用 GPIO</td></tr>
+    <tr><td>CH3</td><td>G5</td><td class="num">11</td><td>M5-Bus SPI_SCK と共用</td></tr>
+    <tr><td>CH4</td><td>G16</td><td class="num">2</td><td>汎用 GPIO</td></tr>
+    <tr><td>CH5</td><td>G17</td><td class="num">4</td><td>M5-Bus PB_IN と共用</td></tr>
+    <tr><td>CH6</td><td>G18</td><td class="num">7</td><td>M5-Bus SPI_MOSI と共用</td></tr>
+    <tr><td>CH7</td><td>G19</td><td class="num">9</td><td>M5-Bus SPI_MISO と共用</td></tr>
+    <tr><td>GND</td><td>—</td><td class="num">1 / 3 / 5</td><td>測定対象と必ず共通に</td></tr>
+  </table>
+
+  <div class="warn">
+    <p><b>入力レベルは 3.3V です。</b>5V や 12V の信号を直結すると ESP32-P4 が壊れます。高い電圧を測るときは分圧か 3.3V のレベルシフタ／バッファを挟んでください。</p>
+    <p><b>25 / 27 / 29 番ピンは HVIN、28 / 30 番は 5V とバッテリー</b>です。プローブのリードが触れないよう注意してください。</p>
+  </div>
+
+  <p>未接続の ch がノイズを拾わないよう、既定で内部プルアップを有効にしています。何もつないでいない ch は常時 High に見えます。</p>
+
+  <div class="tip">
+    <p>8ch すべてを 1 つの GPIO バンク (GPIO0–31) に収めてあるので、CPU エンジンはレジスタ 1 回読みで 8ch を取り込めます。ピンを変える場合もバンクをまたがないほうが速度が落ちません。割り当ては <code>include/config.h</code> の先頭 8 行で変更できます。</p>
+  </div>
+
+  <h2 id="build">ビルドと書き込み</h2>
+  <p>PlatformIO と <a href="https://github.com/pioarduino/platform-espressif32">pioarduino</a> の ESP32-P4 対応版を使います。</p>
+  <pre><code>pio run -t upload</code></pre>
+  <p>シリアルモニタ:</p>
+  <pre><code>pio device monitor</code></pre>
+  <p>初回は toolchain のダウンロードで 5〜10 分かかります。</p>
+
+  <div class="warn">
+    <p><b>Windows で Git Bash / MSYS から <code>pio</code> を実行しないでください。</b>ESP-IDF のツールインストーラが <code>MSys/Mingw is not supported</code> で失敗します。PowerShell か cmd から実行してください。</p>
+  </div>
+
+  <h2 id="firstrun">最初の動作確認</h2>
+  <p>外部の信号源がなくても、内蔵のテスト信号発生で全経路を確認できます。USB でつないだまま <a href="#" data-goto="api">リモート制御 API</a> から:</p>
+  <pre><code>gen ch=0 freq=1000000 duty=50
+trigger clear=1
+config engine=parlio rate=26666666 depth=2097152
+single</code></pre>
+  <p>取り込み完了後に <code>stats</code> を送り、<code>stats[0].freq</code> が 1000000 前後になれば、GPIO マトリクスから PARLIO、DMA、バッファまで正常です。</p>
+</article>
+<article data-page="ui" data-section="use" data-title="画面の見かた">
+<h1>画面の見かた</h1>
+  <p class="lede">1280×720 の画面は 5 つの領域に分かれています。</p>
+
+  <figure>
+    <img src="img/03-zoomed.png" alt="拡大した波形表示。8チャンネルすべてに信号がある">
+    <figcaption>混在信号を拡大したところ。CH0/CH1 が I2C、CH2 が UART、CH3 が PWM、CH4–CH7 が SPI。</figcaption>
+  </figure>
+
+  <table>
+    <tr><th>領域</th><th>内容</th></tr>
+    <tr><td>上段バー</td><td>RUN / SINGLE、サンプリングレート、深度、エンジン、トリガモード、右端に状態表示</td></tr>
+    <tr><td>左端の列</td><td>ch 名と割り当て GPIO。<code>inv</code> 表示は論理反転中</td></tr>
+    <tr><td>波形エリア</td><td>時間ルーラ、8ch のトレース、デコード注釈 2 行</td></tr>
+    <tr><td>中段パネル</td><td>カーソル、ch ごとの測定値、状態とメッセージ</td></tr>
+    <tr><td>下段バー</td><td>ズーム / パン / カーソル操作と各種オーバーレイの呼び出し</td></tr>
+  </table>
+
+  <h2 id="statusline">右上の状態表示</h2>
+  <p><code>CPU TRIG'D @ 5.000 MHz #2</code> のように表示されます。</p>
+  <ul>
+    <li><b>エンジン</b> — 実際に使われている取り込みエンジン (<code>PARLIO</code> / <code>CPU</code>)</li>
+    <li><b>状態</b> — <code>IDLE</code> / <code>SAMPLING</code> / <code>TRIG'D</code> (トリガ検出) / <code>UNTRIG</code> (未検出) / <code>FAILED</code></li>
+    <li><b>@ レート</b> — 実効サンプリングレート。要求値ではなくハードウェアが実際に出している値</li>
+    <li><b>#n</b> — 取り込み回数</li>
+  </ul>
+
+  <h2 id="measure">測定値の読みかた</h2>
+  <p>中段パネルの MEASUREMENTS は、取り込み全体に対する ch ごとの統計です。</p>
+  <ul>
+    <li><b>周波数</b> — 立ち上がり間隔の平均から算出。窓の端で切れたバーストに引きずられません</li>
+    <li><b>デューティ</b> — 完全な 1 周期分だけを対象にした High 比率</li>
+    <li><b>エッジ数</b> — 取り込み全体での遷移回数</li>
+    <li>周期性がない信号では <code>N edges  min 120 ns</code> のように最小パルス幅が出ます</li>
+  </ul>
+  <div class="tip"><p>「サンプリングレートが足りているか」は最小パルス幅で判断できます。最小パルス幅がサンプル周期の 2〜3 倍しかなければ、レートを上げるべきです。</p></div>
+</article>
+<article data-page="capture" data-section="use" data-title="取り込みとトリガ">
+<h1>取り込みとトリガ</h1>
+  <p class="lede">レートと深度の決め方、トリガ条件の組み立て方。</p>
+
+  <figure>
+    <img src="img/02-capture-64k.png" alt="65.5 kSa / 5 MSa/s で取り込んだ状態">
+    <figcaption>深度 65.5 kSa、5 MSa/s で取り込んだ直後。取り込み全体が画面に収まっています。</figcaption>
+  </figure>
+
+  <h2 id="rate">レートと深度</h2>
+  <p>観測したい最速のエッジに対して <b>5〜10 倍</b> のレートが目安です。取り込み時間は <code>深度 ÷ レート</code> で、中段パネルの <code>window</code> に出ます。</p>
+  <table>
+    <tr><th>操作</th><th>効果</th></tr>
+    <tr><td>レート <code>-</code> <code>+</code></td><td>100 kSa/s 〜 80 MSa/s。実効値は右上の <code>@</code> を確認</td></tr>
+    <tr><td>深度 <code>-</code> <code>+</code></td><td>64 kSa 〜 8 MSa。<b>深度を変えると現在の取り込みは破棄されます</b> (レート変更では破棄されません)</td></tr>
+    <tr><td><code>ENG</code></td><td><code>AUTO</code> / <code>PARLIO</code> / <code>CPU</code>。AUTO は PARLIO が使えればそちらを選びます</td></tr>
+  </table>
+  <div class="note"><p>レートは 160 MHz の整数分周でしか出せません。メニューはその実現可能な値 (80 / 53.33 / 40 / 32 / 26.67 / 22.86 / 20 MSa/s …) で構成してあります。24 MSa/s ちょうどは出せないため、上側の 26.67 MSa/s を使ってください。</p></div>
+
+  <h2 id="trigger">トリガ条件</h2>
+  <figure>
+    <img src="img/09-trigger.png" alt="トリガ設定オーバーレイ">
+    <figcaption>Trigger オーバーレイ。ch をタップするたびに条件が一巡します。</figcaption>
+  </figure>
+  <ul>
+    <li>ch のボタンをタップするたびに <code>--</code> → <code>Rise</code> → <code>Fall</code> → <code>Both</code> → <code>High</code> → <code>Low</code> → <code>--</code> と巡回します。</li>
+    <li><b>エッジ条件どうしは OR</b>、<b>レベル条件どうしは AND</b>、両方あるときは「いずれかのエッジ AND すべてのレベル」。</li>
+    <li>例: CH0=<code>Rise</code>、CH1=<code>Low</code> → 「CH1 が Low の間に CH0 が立ち上がったら」</li>
+    <li><b>pre %</b> はプリトリガの割合です。25% なら画面の左 1/4 がトリガ前になります。</li>
+    <li><b>Clear all</b> で全 ch を <code>--</code> に戻します。条件がひとつも無ければトリガ無し (取り込んだものをそのまま表示) になります。</li>
+  </ul>
+
+  <h3>トリガモード</h3>
+  <table>
+    <tr><th>モード</th><th>条件が見つからないとき</th></tr>
+    <tr><td>AUTO</td><td>そのまま表示する</td></tr>
+    <tr><td>NORMAL</td><td>5 秒間、取り込みと検索を繰り返す。その間は前の画面が残る</td></tr>
+    <tr><td>SINGLE</td><td>1 回だけ取り込んで停止</td></tr>
+  </table>
+
+  <div class="note">
+    <p>トリガはハードウェアではなくソフトウェア検索です。バッファを埋めてから条件を探すため、NORMAL モードは「取り込み → 検索 → 見つからなければ再取り込み」を繰り返します。周期的な信号には十分ですが、めったに起きない単発イベントは取り逃す可能性があります。これは「取り込み中は 1 サンプルも落とさない」ことを優先したトレードオフです。</p>
+  </div>
+</article>
+<article data-page="navigate" data-section="use" data-title="波形操作とカーソル">
+<h1>波形操作とカーソル</h1>
+  <p class="lede">パン・ズームと 2 本のカーソルによる時間測定。</p>
+
+  <figure>
+    <img src="img/08-cursors.png" alt="カーソル A と B を置いた状態">
+    <figcaption>カーソル A / B を置くと、中段パネルに Δt とその逆数 (周波数) が出ます。</figcaption>
+  </figure>
+
+  <table>
+    <tr><th>操作</th><th>動作</th></tr>
+    <tr><td>ドラッグ</td><td>左右にパン</td></tr>
+    <tr><td>2 本指ピンチ</td><td>時間軸ズーム (指の中点が固定される)</td></tr>
+    <tr><td>タップ</td><td>アクティブなカーソルをその位置へ</td></tr>
+    <tr><td><span class="kbd">Zoom-</span> <span class="kbd">Zoom+</span></td><td>画面中央を軸に 2 倍ずつズーム</td></tr>
+    <tr><td><span class="kbd">Fit</span></td><td>取り込み全体を画面に収める</td></tr>
+    <tr><td><span class="kbd">Auto</span></td><td>最も細いパルスが約 3 px になるズームに合わせる (取り込み直後の既定)</td></tr>
+    <tr><td><span class="kbd">|&lt;</span> <span class="kbd">&gt;|</span></td><td>先頭 / 末尾へ</td></tr>
+    <tr><td><span class="kbd">&lt;&lt;</span> <span class="kbd">&gt;&gt;</span></td><td>半画面ずつスクロール</td></tr>
+    <tr><td><span class="kbd">Trig</span></td><td>トリガ位置へジャンプ</td></tr>
+    <tr><td><span class="kbd">Cur A</span> <span class="kbd">Cur B</span></td><td>置きたいカーソルを選ぶ (選択中が反転表示)</td></tr>
+    <tr><td><span class="kbd">Clr</span></td><td>カーソルを消す</td></tr>
+  </table>
+
+  <h2 id="autoscale">取り込み直後の自動スケール</h2>
+  <p>取り込み全体を画面幅に収めると、2 MSa を約 1180 px に描くことになり 1 列あたり 1700 サンプル。どの ch も塗りつぶしの帯になり、パターンが何も見えません。</p>
+  <p>そこで取り込み後は、<b>捕まえた信号の中で最も細いパルスが約 3 px になる</b>ズームを自動で選びます。これは全 ch が形を保てる最も粗い倍率です。全体を俯瞰したいときは <span class="kbd">Fit</span>、自動スケールに戻したいときは <span class="kbd">Auto</span> を押してください。</p>
+
+  <h2 id="lod">ズームアウトしてもグリッチが消えない理由</h2>
+  <p>8 MSa を約 1150 ピクセルに描くと、1 列あたり 7000 サンプル。単純に間引くと 1 サンプルだけのヒゲが見えなくなり、ロジックアナライザーとして使い物になりません。</p>
+  <p>そこで取り込み完了時に <b>(OR, AND) の要約ピラミッド</b> を構築しています。OR は「一度でも High だったか」、AND は「ずっと High だったか」を表すので、どれだけズームアウトしても 1 サンプルの尖りが「High と Low の両方あり」= 縦線として残ります。<b>正確さを落とさない間引き</b>です。</p>
+</article>
+<article data-page="channels" data-section="use" data-title="チャンネル設定">
+<h1>チャンネル設定</h1>
+  <p class="lede">表示のオンオフと論理反転。</p>
+
+  <figure>
+    <img src="img/10-channels.png" alt="チャンネル設定オーバーレイ">
+    <figcaption>Channels オーバーレイ。ch ごとに表示と論理を切り替えます。</figcaption>
+  </figure>
+
+  <ul>
+    <li><b>SHOWN / hidden</b> — 表示のオンオフ。隠すと残りの ch のレーンが広がるので、注目したい数本だけを大きく見られます。</li>
+    <li><b>INVERTED / normal</b> — 論理反転。オープンコレクタや反転プローブ用です。波形・測定・CSV・VCD すべてに反映されます。</li>
+  </ul>
+  <p>ch 名の下に割り当て GPIO が出ます。反転中は左端の列に <code>inv</code> と表示されます。</p>
+</article>
+<article data-page="decode" data-section="use" data-title="プロトコルデコード">
+<h1>プロトコルデコード</h1>
+  <p class="lede">UART / I2C / SPI を波形に重ねて表示します。</p>
+
+  <figure>
+    <img src="img/11-decode-options.png" alt="デコーダ設定オーバーレイ">
+    <figcaption>Decode オーバーレイ。設定を変えるたびに自動で再デコードされます。</figcaption>
+  </figure>
+
+  <h2 id="i2c">I2C</h2>
+  <figure>
+    <img src="img/05-decode-i2c.png" alt="I2C のデコード結果">
+    <figcaption>アドレス <code>50 W</code> に続いてデータ <code>50 5A 3C</code>。下の行に ACK (<code>A</code>) / NAK (<code>N</code>)。</figcaption>
+  </figure>
+  <p>SCL と SDA の ch を割り当てるだけです。<code>START</code> / <code>Sr</code> (リピートスタート) / <code>STOP</code>、アドレス (R/W 付き)、データバイトが上の行に出ます。</p>
+
+  <h2 id="uart">UART</h2>
+  <figure>
+    <img src="img/06-decode-uart.png" alt="UART のデコード結果">
+    <figcaption>データバイト <code>4C 'L'</code> <code>41 'A'</code>。下の行に <code>S</code> (スタート) / <code>T</code> (ストップ)。</figcaption>
+  </figure>
+  <table>
+    <tr><th>項目</th><th>説明</th></tr>
+    <tr><td>Line</td><td>信号の ch</td></tr>
+    <tr><td>Baud</td><td><code>auto</code> か固定値。<code>auto</code> は最小パルス幅を 1 ビットとみなして推定します</td></tr>
+    <tr><td>Data bits</td><td>5〜9</td></tr>
+    <tr><td>Parity</td><td>N / E / O</td></tr>
+    <tr><td>Stop bits</td><td>1 / 2</td></tr>
+    <tr><td>Polarity</td><td><code>idle high</code> が通常の TTL シリアル。反転プローブなら <code>inverted</code></td></tr>
+    <tr><td>Bit order</td><td>通常は LSB first</td></tr>
+  </table>
+  <p>ストップビットが崩れているフレームは赤で <code>T!</code> になり、そのバイトもエラー色で表示されます。そこでビットクロックを信用せず、次のエッジで同期を取り直すので、1 バイトの乱れがストリーム全体を壊しません。</p>
+  <div class="note"><p>オートボーは「1 ビット幅のパルスが最低 1 つある」ことが前提です。<code>0x00</code> や <code>0xFF</code> ばかりのストリームでは外すので、その場合は固定値にしてください。</p></div>
+
+  <h2 id="spi">SPI</h2>
+  <figure>
+    <img src="img/07-decode-spi.png" alt="SPI のデコード結果">
+    <figcaption>MOSI が上の行、MISO が下の行。<code>CS\</code> / <code>CS/</code> は選択・解除。</figcaption>
+  </figure>
+  <p>CLK は必須、MOSI / MISO / CS は <code>--</code> で無効にできます。CS を <code>--</code> にすると常時選択として扱います。CPOL / CPHA でサンプルエッジが決まります (CPOL = CPHA のとき立ち上がりでサンプル)。</p>
+</article>
+<article data-page="save" data-section="use" data-title="保存とエクスポート">
+<h1>保存とエクスポート</h1>
+  <p class="lede">microSD へ CSV / VCD / デコード結果 / 画面を書き出します。</p>
+
+  <figure>
+    <img src="img/12-save.png" alt="保存オーバーレイ">
+    <figcaption>Save オーバーレイ。カードは初回アクセス時に自動でマウントされます。</figcaption>
+  </figure>
+
+  <table>
+    <tr><th>ボタン</th><th>出力</th><th>内容</th></tr>
+    <tr><td>Save CSV (view)</td><td><code>/la/capNNNN.csv</code></td><td><b>表示範囲のみ</b>、1 サンプル 1 行。時刻はトリガ基準の秒</td></tr>
+    <tr><td>Save VCD (all)</td><td><code>/la/capNNNN.vcd</code></td><td>取り込み全体。値の変化点のみ</td></tr>
+    <tr><td>Save decode</td><td><code>/la/decNNNN.txt</code></td><td>デコード結果をタブ区切りで</td></tr>
+    <tr><td>Screenshot BMP</td><td><code>/la/shotNNNN.bmp</code></td><td>画面全体の 24 bit BMP</td></tr>
+  </table>
+
+  <div class="note"><p>CSV を全体で出さないのは、8 MSa だと数十 MB になり書き込みに何分もかかるためです。全体が必要なら VCD を使ってください。値の変化点だけを書くので桁違いに小さくなります。</p></div>
+
+  <h2 id="pulseview">PulseView / GTKWave で開く</h2>
+  <ol>
+    <li>VCD を PC にコピー</li>
+    <li>PulseView で <i>Import Value Change Dump data</i> を選ぶ</li>
+    <li>そのまま sigrok の豊富なデコーダ群が使えます</li>
+  </ol>
+  <p>タイムスケールは「1 サンプルあたり 10 ステップ以上」を保つ最も粗い単位が自動で選ばれるので、レートを変えても分解能が落ちません。</p>
+</article>
+<article data-page="api" data-section="api" data-title="リモート制御 API">
+<h1>リモート制御 API</h1>
+  <p class="lede">USB CDC (書き込みに使うのと同じポート) が行指向の制御 API を兼ねています。1 行送ると JSON が 1 行返る同期プロトコルです。</p>
+
+  <div class="warn">
+    <p><b>DTR / RTS を操作しないでください。</b>ESP32 の USB-Serial-JTAG ではこの 2 本がリセットとブートピンに直結しており、トグルするとボードが ROM ブートローダに落ちて応答しなくなります。ポートを開くときは両方 false のままにしてください。</p>
+  </div>
+
+  <p>ログ出力は絞ってありますが、ESP-IDF が起動時などに数行出すことがあります。<b><code>{</code> で始まらない行は読み飛ばしてください。</b></p>
+  <p>コマンドは取り込みの<b>合間</b>に処理されます。取り込み中はブロックするため、掃引の途中で送った <code>stop</code> は次の掃引の前に効きます。</p>
+
+  <h2 id="api-basic">基本</h2>
+  <table>
+    <tr><th>コマンド</th><th>内容</th></tr>
+    <tr><td><code>ping</code></td><td>疎通確認とファームウェア情報</td></tr>
+    <tr><td><code>status</code></td><td>全状態のスナップショット。多くのコマンドがこれと同じ形を返す</td></tr>
+    <tr><td><code>run</code> / <code>single</code> / <code>stop</code></td><td>連続取り込み / 1 回 / 停止</td></tr>
+    <tr><td><code>config [rate=Hz] [depth=samples] [engine=auto|parlio|cpu]</code></td><td><code>rate</code> はメニュー内の最も近い値にスナップ。<code>depth</code> は 2 の冪に切り上げ</td></tr>
+    <tr><td><code>trigger [mode=] [pos=] [chN=off|rise|fall|both|high|low] [clear=1]</code></td><td>トリガ条件</td></tr>
+    <tr><td><code>channel n=0-7 [on=0|1] [inv=0|1]</code></td><td>表示と論理反転</td></tr>
+  </table>
+  <pre><code>&gt; ping
+{"ok":true,"fw":"0.1.0","api":1,"board":22,"channels":8,"parlio_built":true,"cpu_mhz":360}</code></pre>
+
+  <h2 id="api-read">波形の読み出し</h2>
+  <table>
+    <tr><th>コマンド</th><th>内容</th></tr>
+    <tr><td><code>stats</code></td><td>ch ごとの周波数・デューティ・エッジ数・最小パルス幅</td></tr>
+    <tr><td><code>edges ch=N [from=] [count=]</code></td><td><b>自動化の第一候補。</b>遷移位置だけを返すので生サンプルより桁違いに小さい。1 回最大 2048 遷移</td></tr>
+    <tr><td><code>read [from=] [count=]</code></td><td>生サンプルを 16 進で。1 サンプル 1 バイト、bit N が ch N。1 回最大 4096</td></tr>
+    <tr><td><code>ann [from=] [count=]</code></td><td>デコード結果。1 回最大 512 件</td></tr>
+  </table>
+  <pre><code>&gt; edges ch=0 count=8
+{"ok":true,"ch":0,"from":0,"level":1,"sec_per_sample":3.75e-08,
+ "edges":[13,27,40,54,67,81,94,108],"next":109,"more":true}</code></pre>
+
+  <h2 id="api-decode">デコーダ</h2>
+  <pre><code>decode kind=i2c scl=0 sda=1
+decode kind=uart line=2 baud=auto bits=8 parity=n stop=1
+decode kind=spi clk=4 mosi=5 miso=6 cs=7 cpol=0 cpha=0 order=msb bits=8</code></pre>
+  <p>設定を変えると自動で再デコードされます。<code>mosi</code> / <code>miso</code> / <code>cs</code> は <code>-1</code> で無効化できます。</p>
+
+  <h2 id="api-gen">内蔵テスト信号発生</h2>
+  <p><code>gen ch=N [freq=Hz] [duty=0..100]</code> は指定した ch のピンを LEDC で駆動しつつ、そのままサンプリングもできます。<b>外部信号源なしで全経路を検証できます。</b></p>
+  <pre><code>&gt; gen ch=0 freq=1000000 duty=50
+{"ok":true,"gen":"on","ch":0,"pin":2,"freq":1000000,"duty":50,"res_bits":5}
+&gt; gen off=1</code></pre>
+  <p><code>res_bits</code> は LEDC の分解能で、周波数が高いほど小さくなります。デューティの量子化幅は 1/2<sup>res_bits</sup> なので、高い周波数では 50% ちょうどは出ません (<code>res_bits=5</code> なら 15/32 = 46.9%)。</p>
+
+  <h2 id="api-example">PowerShell からのヘルパー</h2>
+  <pre><code>$p = New-Object System.IO.Ports.SerialPort "COM6",115200,None,8,one
+$p.DtrEnable = $false   # 必須: トグルするとブートローダに落ちる
+$p.RtsEnable = $false
+$p.NewLine = "`n"
+$p.Open()
+
+function Send-Cmd([string]$c) {
+  $p.WriteLine($c)
+  $sb = New-Object System.Text.StringBuilder
+  $deadline = (Get-Date).AddSeconds(15)
+  while ((Get-Date) -lt $deadline) {
+    $null = $sb.Append($p.ReadExisting())
+    foreach ($ln in ($sb.ToString() -split "`n")) {
+      $t = $ln.Trim()
+      if ($t.StartsWith('{') -and $t.EndsWith('}')) { return $t | ConvertFrom-Json }
+    }
+    Start-Sleep -Milliseconds 15
+  }
+}
+
+Send-Cmd 'ping'</code></pre>
+  <p>全コマンドの詳細は <a href="API.md">docs/API.md</a> にあります。</p>
+</article>
+<article data-page="arch" data-section="how" data-title="アーキテクチャ">
+<h1>アーキテクチャ</h1>
+  <p class="lede">取り込みエンジン、トリガ、描画の設計と、その理由。</p>
+
+  <pre><code>main.cpp
+  └─ App                            アプリ状態機械 + タッチ UI
+       ├─ ISampler                  取り込みエンジン抽象
+       │    ├─ SamplerParlio        PARLIO RX + GDMA
+       │    └─ SamplerCpu           GPIO ポーリングループ
+       ├─ CaptureBuffer             PSRAM のサンプル列 + LOD ピラミッド
+       ├─ findTrigger()             トリガ条件のソフトウェア検索
+       ├─ measureChannels()         ch ごとの周波数/デューティ/エッジ
+       ├─ runDecoder()              UART / I2C / SPI
+       ├─ WaveformView              波形・ルーラ・注釈・カーソルの描画
+       └─ Exporter                  microSD への CSV / VCD / txt / BMP</code></pre>
+
+  <h2 id="format">サンプル格納形式</h2>
+  <p>1 サンプル 1 バイト、ビット N が ch N です。8ch を 1 バイトに詰めることで</p>
+  <ul>
+    <li>PARLIO の <code>data_width = 8</code> とそのまま一致する</li>
+    <li>CPU エンジンのパック処理が数命令で済む</li>
+    <li>トリガ検索・測定・デコードがすべて「バイト列の走査」になる</li>
+  </ul>
+  <p>という形に揃えました。深度 8 MSa でも 8 MB なので、Tab5 の 32 MB PSRAM に余裕で収まります。</p>
+
+  <h2 id="parlio">PARLIO エンジン</h2>
+  <p>ESP32-P4 の PARLIO 受信器は、内部で分周したクロックの各エッジで 8 本の入力をラッチし、GDMA でメモリに書き出します。CPU は一切関与しないのでジッタがありません。</p>
+  <p>設計上のいちばんの制約は、ドライバが <b>内部 RAM 以外のペイロードを拒否する</b>ことです。そこで内部 RAM に 191 KiB のリングを確保し、<code>partial_rx_en</code> の<b>無限トランザクション</b>を張ります。ディスクリプタチェーンが循環するので、ハードウェアはブロック間で一度も止まりません。</p>
+  <p>データの取り出しには 2 つのモードがあり、これが到達レートを決めます。</p>
+  <table>
+    <tr><th>モード</th><th>条件</th><th>特徴</th></tr>
+    <tr><td><b>direct</b></td><td>深度 ≤ 191 kSa</td><td>取り込み中は一切コピーしない。リアルタイム制約ゼロで、レートはペリフェラルの上限まで出せる</td></tr>
+    <tr><td><b>stream</b></td><td>深度 &gt; 191 kSa</td><td>ディスクリプタ完了ごとに PSRAM へコピー。コピーがサンプルレートに追従する必要がある</td></tr>
+  </table>
+
+  <h2 id="cpu">CPU エンジン</h2>
+  <p>GPIO 入力レジスタを直接読み、config.h のピンマップからコンパイル時に展開したシフト列で 1 バイトに詰めます。既定のピンマップは全 ch がバンク 0 なので、レジスタ読みは 1 回だけです。</p>
+  <p>ペーシングはディレイループではなく RISC-V のサイクルカウンタで行います。サンプルごとに締切を計算してそこまでスピンし、要求レートがループの限界より速い場合は自然にフリーランに落ちて<b>実測レート</b>を返します。時間軸が嘘にならないのがこの方式の利点です。</p>
+  <p>割り込みは 2 ms 程度のチャンク単位でマスクします。数秒かかる取り込みの間ずっとマスクすると tick とウォッチドッグが死ぬので、チャンク境界に小さな (報告済みの) 隙間ができることを受け入れています。</p>
+
+  <h2 id="trig-impl">トリガ</h2>
+  <p>ハードウェアトリガは無いので、<b>バッファを埋めてから条件を探す</b>方式です。<code>TriggerConfig</code> は 4 つのビットマスク (rise / fall / levelHigh / levelLow) に畳まれるので、検索ループは 1 サンプルあたり数命令で済みます。</p>
+  <p>検索はプリトリガ分だけ進んだ位置から始めます。こうすると、見つかった位置の手前に必ず要求されたプリトリガ長が確保されます。</p>
+
+  <h2 id="lod-impl">LOD ピラミッド</h2>
+  <p>取り込み完了時に (OR, AND) の要約ピラミッドを構築します。レベル 0 は 64 サンプルを 1 エントリに畳み、以降は 2 エントリずつ畳んで倍々。メモリは 2 バイト × (N/64) × 2 ≒ N/16 バイトで、8 MSa でも 512 KB 程度です。</p>
+  <p>1 px あたり 1 サンプル未満まで拡大したときは、ピラミッドを使わず実サンプルをそのまま階段状に描きます。</p>
+</article>
+<article data-page="perf" data-section="how" data-title="実測性能">
+<h1>実測性能</h1>
+  <p class="lede">M5Stack Tab5 実機 (ESP32-P4 rev v1.3 / 360 MHz / PSRAM 32MB) での測定値。</p>
+
+  <p>内蔵テスト信号発生で CH0 に 1 MHz 方形波を出し、深度 2 MSa で取り込んだ結果です。</p>
+  <table>
+    <tr><th>要求レート</th><th class="num">実効レート</th><th class="num">取り込み</th><th class="num">1 MHz の測定値</th><th class="num">誤差</th><th class="num">コピー ISR 占有</th></tr>
+    <tr><td>20 MSa/s</td><td class="num">20.00</td><td class="num">2097152</td><td class="num">1.00 MHz</td><td class="num">0.00%</td><td class="num">20%</td></tr>
+    <tr><td>22.86 MSa/s</td><td class="num">22.86</td><td class="num">2097152</td><td class="num">1.00 MHz</td><td class="num">0.00%</td><td class="num">22%</td></tr>
+    <tr><td><b>26.67 MSa/s</b></td><td class="num"><b>26.67</b></td><td class="num">2097152</td><td class="num">1.00 MHz</td><td class="num">0.00%</td><td class="num"><b>26%</b></td></tr>
+    <tr><td>32 MSa/s</td><td class="num">32.00</td><td class="num">2097152</td><td class="num">1.00 MHz</td><td class="num">0.00%</td><td class="num">31%</td></tr>
+    <tr><td>40 MSa/s</td><td class="num">40.00</td><td class="num">2097152</td><td class="num">1.00 MHz</td><td class="num">0.00%</td><td class="num">39%</td></tr>
+    <tr><td>53.33 MSa/s</td><td class="num">53.33</td><td class="num">2097152</td><td class="num">1.00 MHz</td><td class="num">0.00%</td><td class="num">52%</td></tr>
+    <tr><td>80 MSa/s</td><td class="num">80.00</td><td class="num">2097152</td><td class="num">1.00 MHz</td><td class="num">0.00%</td><td class="num">77%</td></tr>
+  </table>
+
+  <div class="tip"><p><b>2000 円クラスの FX2LP 系ロジアナ (24 MSa/s 8ch) を上回ります。</b>26.67 MSa/s でコピー ISR の占有率はわずか 26%、深度も 2 MSa まで確認済みです。エッジ数も理論値と一致しているため、取りこぼしはありません。</p></div>
+
+  <div class="warn"><p>80 MSa/s も動作しますが ISR 占有 77% と余裕がないため、常用は <b>40 MSa/s 以下</b>を推奨します。占有率が 80% を超えると Info パネルに <code>OVERRUN RISK</code> と表示されます。</p></div>
+
+  <h2 id="perf-input">入力周波数の実測</h2>
+  <p>内蔵ジェネレータで CH0 に方形波を出し、80 MSa/s・深度 131072 で取り込んだ結果です。</p>
+  <table>
+    <tr><th class="num">発生周波数</th><th class="num">1 周期あたり</th><th class="num">測定値</th><th class="num">エッジ数</th><th>判定</th></tr>
+    <tr><td class="num">1.00 MHz</td><td class="num">80 サンプル</td><td class="num">1.00 MHz</td><td class="num">3279</td><td>理論値と一致</td></tr>
+    <tr><td class="num">1.95 MHz</td><td class="num">40 サンプル</td><td class="num">1.95 MHz</td><td class="num">6379</td><td>一致</td></tr>
+    <tr><td class="num">4.91 MHz</td><td class="num">16 サンプル</td><td class="num">4.91 MHz</td><td class="num">16092</td><td>一致</td></tr>
+    <tr><td class="num">9.74 MHz</td><td class="num">8 サンプル</td><td class="num">9.74 MHz</td><td class="num">31908</td><td>一致</td></tr>
+    <tr><td class="num">12.96 MHz</td><td class="num">6 サンプル</td><td class="num">12.96 MHz</td><td class="num">42449</td><td>一致</td></tr>
+    <tr><td class="num"><b>19.44 MHz</b></td><td class="num"><b>4.1 サンプル</b></td><td class="num"><b>19.44 MHz</b></td><td class="num"><b>63695 / 63696</b></td><td>2 回連続で一致</td></tr>
+  </table>
+  <p>発生周波数が半端なのは LEDC の分周が小数になるためで、アナライザ側の誤差ではありません (同じ値が繰り返し再現します)。</p>
+  <div class="note"><p><b>19.44 MHz より上は未測定です。</b>内蔵 LEDC がそれ以上を生成できず外部の信号源が必要なためで、ペリフェラル側の上限ではありません。</p></div>
+
+  <h2 id="perf-channels">チャンネルマッピングの検証</h2>
+  <p>内蔵ジェネレータで 1 MHz を 1 ch ずつ順に出し、20 MSa/s・深度 131072 で取り込んだ結果です。理論エッジ数は 13107。</p>
+  <table>
+    <tr><th>駆動 ch</th><th>GPIO</th><th>反応した ch</th><th class="num">測定値</th><th class="num">エッジ数</th></tr>
+    <tr><td>CH0</td><td>G2</td><td>CH0 のみ</td><td class="num">1.00 MHz</td><td class="num">13106</td></tr>
+    <tr><td>CH1</td><td>G3</td><td>CH1 のみ</td><td class="num">1.00 MHz</td><td class="num">13107</td></tr>
+    <tr><td>CH2</td><td>G4</td><td>CH2 のみ</td><td class="num">1.00 MHz</td><td class="num">13111</td></tr>
+    <tr><td>CH3</td><td>G5</td><td>CH3 のみ</td><td class="num">1.00 MHz</td><td class="num">13111</td></tr>
+    <tr><td>CH4</td><td>G16</td><td>CH4 のみ</td><td class="num">1.00 MHz</td><td class="num">13114</td></tr>
+    <tr><td>CH5</td><td>G17</td><td>CH5 のみ</td><td class="num">1.00 MHz</td><td class="num">13107</td></tr>
+    <tr><td>CH6</td><td>G18</td><td>CH6 のみ</td><td class="num">1.00 MHz</td><td class="num">13111</td></tr>
+    <tr><td>CH7</td><td>G19</td><td>CH7 のみ</td><td class="num">1.00 MHz</td><td class="num">13111</td></tr>
+  </table>
+  <p>チャンネルの入れ替わりもクロストークもありません。トリガも実機で確認済みで、<code>ch3=rise</code> / プリトリガ 25% でトリガ位置 32770 (境界の 32768 直後)、アイドル線に <code>ch5=rise</code> を掛けると <code>-1</code> (誤発火なし) になります。</p>
+
+  <h2 id="perf-cpu">CPU エンジンの実力</h2>
+  <p>5 MSa/s を要求して <b>実測 2.811 MSa/s</b>。200 kHz の信号を 200.06 kHz と測定 (誤差 0.03%) するので、実測レートを返す設計どおり時間軸は正しいままです。1 サンプルあたり約 128 サイクルで、PSRAM への書き込みがコストを支配しています。</p>
+  <div class="note"><p><b>CPU エンジンは 2.8 MSa/s 程度が上限</b>とみてください。PARLIO が使えない場合のフォールバックであり、常用するものではありません。</p></div>
+
+  <h2 id="perf-todo">未検証の項目</h2>
+  <table>
+    <tr><th>項目</th><th>状態</th></tr>
+    <tr><td>microSD への保存</td><td><b>未検証</b>。CSV / VCD / BMP の書き出しコードは一度も実行していません</td></tr>
+    <tr><td>実機のタッチ操作</td><td>未確認。UI 操作はシミュレータの合成タッチでのみ検証</td></tr>
+    <tr><td>外部回路の実測</td><td>すべて内部ループバック。実際のプローブ配線・GND・信号品質は未検証</td></tr>
+    <tr><td>実プロトコルのデコード</td><td>合成波形のみ。ゴミ入力でクラッシュしないことは確認済み</td></tr>
+    <tr><td>19.44 MHz 超の入力</td><td>内蔵ジェネレータの限界で未測定</td></tr>
+  </table>
+
+  <h2 id="perf-naming">呼称について</h2>
+  <table>
+    <tr><th>表記</th><th class="num">値</th><th>根拠</th></tr>
+    <tr><td><b>サンプリングレート</b></td><td class="num"><b>80 MSa/s</b> (8ch 同時)</td><td>実測。エッジ数が理論値と一致</td></tr>
+    <tr><td>常用推奨レート</td><td class="num">40 MSa/s 以下</td><td>80 MSa/s はコピー ISR 占有 77% で余裕がない</td></tr>
+    <tr><td>最小検出パルス幅</td><td class="num">12.5 ns @ 80 MSa/s</td><td>1 サンプル周期</td></tr>
+    <tr><td>測定確認済み入力周波数</td><td class="num">19.44 MHz</td><td>上記の実測。これ以上は未測定</td></tr>
+    <tr><td>実用的な信号周波数</td><td class="num">8〜20 MHz</td><td>5〜10 倍のオーバーサンプリングを確保する場合</td></tr>
+  </table>
+  <p>格安ロジアナが「24MHz」と名乗るときの 24 はサンプリングレートなので、同じ流儀なら本機は <b>80MHz 相当</b>です。ただし「80 MHz の信号が測れる」と誤読されるため、<b><code>80 MSa/s</code> と単位まで書くことを推奨します。</b></p>
+
+  <h2 id="perf-notes">測定上の注意</h2>
+  <ul>
+    <li><b>時間軸はハードウェア分周値をそのまま使います。</b>壁時計で測るとアーミングと停止処理の分だけ約 1% 伸びるため、そちらは診断用にのみ表示しています。</li>
+    <li>測定できる信号の周波数はサンプリングレートとは別です。エッジ位置を確実に取るには 5〜10 倍のオーバーサンプリングが必要なので、40 MSa/s なら実用 4〜8 MHz、20 MSa/s なら 2〜4 MHz が目安です。</li>
+    <li>CPU エンジンの上限はループ速度で決まり、実測値が表示されます。PARLIO が使えない場合のフォールバックです。</li>
+  </ul>
+</article>
+<article data-page="sim" data-section="dev" data-title="シミュレータ">
+<h1>ブラウザシミュレータ</h1>
+  <p class="lede">実機なしで UI を動かし、このドキュメントのスクリーンショットを再生成します。</p>
+
+  <p>このページのスクリーンショットはすべて、<b>実機と同じ UI コードを WebAssembly でビルドして生成しています</b>。モックアップではありません。<code>WaveformView</code>、<code>App</code>、デコーダ、測定、LOD ピラミッドはファームウェアとバイト単位で同じソースです。</p>
+
+  <h2 id="sim-how">仕組み</h2>
+  <p><a href="https://github.com/airpocket-soundman/web-simulator-for-lvgl">web-simulator-for-lvgl</a> の M5GFX 互換バックエンドを使います。互換層はピクセル・矩形・線までしか持たないため、UI が必要とする以下を <code>sim/</code> で補っています。</p>
+  <ul>
+    <li><code>sim/sim_gfx.cpp</code> — テキスト描画、角丸矩形、三角形。フォントは Consolas を <code>sim/tools/make_font.py</code> でビットマップ化 (M5GFX の Font2/Font4 と同じ送り幅に合わせてあるので、ラベルがボタンからはみ出しません)</li>
+    <li><code>sim/shim/</code> — M5Unified、Arduino、esp_heap_caps、esp_log の最小スタブ</li>
+    <li><code>sim/sim_sampler.cpp</code> — 合成波形を生成する <code>ISampler</code>。I2C / UART / PWM / SPI が同時に走るシーン</li>
+  </ul>
+  <p>UI コードは <code>M5GFX</code> を直接名指しせず <code>include/gfx.h</code> の <code>LaGfx</code> を使うので、ファームウェアとシミュレータで同じソースが通ります。</p>
+
+  <h2 id="sim-build">ビルド</h2>
+  <p>インタラクティブな HTML を生成する:</p>
+  <pre><code>&amp; D:\github\airpocket-soundman\web-simulator-for-lvgl\lvgl-sim.ps1 build .</code></pre>
+  <p><code>build/lvgl-simulator/m5tab5-logic-analyzer.html</code> ができます。サーバー不要でそのままブラウザで開けます。</p>
+
+  <p>スクリーンショットを再生成する:</p>
+  <pre><code>pwsh sim/tools/build_shots.ps1</code></pre>
+  <p>同じソースをヘッドレスの Node プログラムとしてビルドし、スクリプト化したタッチ操作で 13 枚を <code>docs/img/</code> に書き出します。<b>スクリプト駆動なので、何度実行しても同じ画像が得られます。</b></p>
+
+  <h2 id="sim-found">シミュレータで見つかった不具合</h2>
+  <p>スクリーンショットを撮る過程で、実機にも存在する UI バグが 2 件見つかりました。</p>
+  <ul>
+    <li><b>オーバーレイの Close を押すとカーソルが置かれる</b> — ボタンが押下を処理したあと、指を離したイベントが波形エリアに素通りしていました。押下を消費したことを記録して解決。</li>
+    <li><b>クリック直後の 1 フレームがボタンの古い状態を描く</b> — ボタン配列を入力処理の<i>前</i>に構築していたため。描画直前に再構築するよう変更。</li>
+  </ul>
+
+  <div class="note"><p>シミュレータは UI プレビューであって、ボードエミュレータ ではありません。PARLIO、microSD、シリアル API は動きません (Save パネルは「ブラウザには microSD がない」と正直に返します)。</p></div>
+</article>
+<article data-page="trouble" data-section="dev" data-title="トラブルシューティング">
+<h1>トラブルシューティング</h1>
+  <p class="lede">まずは Info パネルを見てください。</p>
+
+  <figure>
+    <img src="img/13-info.png" alt="Info オーバーレイ">
+    <figcaption>Info オーバーレイ。エンジンの選択結果、直前の取り込みモード、メモリ、ピン割り当てが出ます。</figcaption>
+  </figure>
+
+  <table>
+    <tr><th>症状</th><th>確認すること</th></tr>
+    <tr><td>全 ch が High のまま</td><td>プローブが浮いている (内部プルアップが効いている)。GND を測定対象と共通にしたか</td></tr>
+    <tr><td>波形がガタつく</td><td>レートが足りない。信号の 5〜10 倍まで上げる。最小パルス幅の測定値が目安になる</td></tr>
+    <tr><td><code>UNTRIG</code> のまま</td><td>トリガ条件が厳しすぎる。Trigger → <b>Clear all</b> で条件を外して素の波形を見る</td></tr>
+    <tr><td>PARLIO が選ばれない</td><td>Info で理由を確認。内部 RAM 不足なら深度を下げる</td></tr>
+    <tr><td><code>OVERRUN RISK</code> が出る</td><td>レートを下げるか、深度を 191 kSa 以下にして direct モードにする</td></tr>
+    <tr><td>SD に保存できない</td><td>Save パネルのエラー表示を確認。FAT32 でフォーマットしたカードを使う</td></tr>
+    <tr><td>期待より遅いレートしか出ない</td><td>ENG が <code>CPU</code> になっていないか。CPU エンジンの上限はループ速度で決まる</td></tr>
+    <tr><td>API が応答しない</td><td>DTR / RTS を触っていないか。触るとブートローダに落ちる。<code>esptool --after hard-reset chip-id</code> で復帰</td></tr>
+    <tr><td>PlatformIO のツール導入が失敗する</td><td>Git Bash / MSYS から実行していないか。PowerShell か cmd を使う</td></tr>
+  </table>
+</article>
+
+</main>
+
+<script>window.SITE_SECTIONS = [{"id": "start", "label": "はじめに"}, {"id": "use", "label": "使う"}, {"id": "api", "label": "API"}, {"id": "how", "label": "仕組み"}, {"id": "dev", "label": "開発"}];</script>
+<script src="assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/airpocket-soundman/web-simulator-for-lvgl/main/schema/lvgl-simulator.schema.json",
+  "schema": 1,
+  "renderer": "m5gfx",
+  "title": "M5Tab5 Logic Analyzer",
+  "outputName": "m5tab5-logic-analyzer",
+  "display": { "width": 1280, "height": 720 },
+  "entry": "setup",
+  "loop": "loop",
+  "sources": [
+    "sim/sim_main.cpp",
+    "sim/sim_gfx.cpp",
+    "sim/sim_sampler.cpp",
+    "sim/sim_exporter.cpp",
+    "src/logic_types.cpp",
+    "src/capture/capture_buffer.cpp",
+    "src/analysis/trigger.cpp",
+    "src/analysis/measure.cpp",
+    "src/decode/decoder.cpp",
+    "src/ui/waveform_view.cpp",
+    "src/app.cpp",
+    "src/api/serial_api.cpp"
+  ],
+  "includeDirectories": [
+    "sim/shim",
+    "sim",
+    "include",
+    "src"
+  ],
+  "compileDefinitions": [
+    "LA_SIMULATOR=1"
+  ],
+  "assets": [],
+  "notices": ["LICENSE"]
+}

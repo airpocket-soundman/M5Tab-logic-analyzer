@@ -1,0 +1,64 @@
+// ---------------------------------------------------------------------------
+//  waveform_view.h - the scrolling / zooming trace area
+// ---------------------------------------------------------------------------
+#pragma once
+
+#include "capture/capture_buffer.h"
+#include "decode/decoder.h"
+#include "gfx.h"
+#include "logic_types.h"
+
+struct Rect {
+    int x = 0, y = 0, w = 0, h = 0;
+    bool contains(int px, int py) const {
+        return px >= x && px < x + w && py >= y && py < y + h;
+    }
+};
+
+class WaveformView {
+public:
+    void setArea(const Rect& r) { _area = r; }
+    const Rect& area() const { return _area; }
+
+    // Fit the whole capture into the plot width.
+    void fit(uint32_t sampleCount);
+
+    // Multiply the zoom by `factor` (>1 zooms in) keeping the sample under
+    // `anchorX` pinned to that pixel.
+    void zoom(double factor, int anchorX, uint32_t sampleCount);
+
+    // Scroll by whole pixels.
+    void panPixels(double dx, uint32_t sampleCount);
+
+    // Centre the view on a sample without changing the zoom.
+    void centerOn(double sample, uint32_t sampleCount);
+
+    double sampleAtX(int x) const;
+    double xForSample(double sample) const;
+
+    double start() const { return _start; }
+    double samplesPerPixel() const { return _spp; }
+    int plotX() const { return _area.x; }
+    int plotW() const { return _area.w; }
+
+    int64_t cursorA = -1;
+    int64_t cursorB = -1;
+
+    void draw(LaGfx& d, const CaptureBuffer& buf, const CaptureInfo& info,
+              const ChannelConfig channels[LA_MAX_CHANNELS],
+              const AnnotationList* anns);
+
+    // Vertical span of one channel lane, for hit testing.
+    int laneHeight(int enabledCount) const;
+
+private:
+    void drawRuler(LaGfx& d, const CaptureInfo& info, const Rect& r);
+    void drawTrace(LaGfx& d, const CaptureBuffer& buf, int ch, bool invert,
+                   uint16_t color, const Rect& lane, int lod);
+    void drawAnnotations(LaGfx& d, const AnnotationList& anns, const Rect& r);
+    void drawCursors(LaGfx& d, const Rect& r, const CaptureInfo& info);
+
+    Rect   _area;
+    double _start = 0.0;    // leftmost visible sample (may be fractional)
+    double _spp   = 1.0;    // samples per pixel
+};

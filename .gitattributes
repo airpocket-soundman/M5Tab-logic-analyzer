@@ -1,0 +1,8 @@
+# Normalise to LF in the repository; checkouts still get platform line endings.
+* text=auto eol=lf
+
+*.png  binary
+*.bmp  binary
+*.bin  binary
+*.wasm binary
+*.ps1  text eol=crlf
