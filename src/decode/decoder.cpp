@@ -75,21 +75,63 @@ uint32_t narrowestPulse(const CaptureBuffer& buf, int channel,
     const uint8_t* p = buf.data();
     const uint32_t end = first + len;
 
-    uint32_t best = 0xFFFFFFFFu;
+    // The narrowest pulse on its own is a bad estimator: a single noise spike
+    // anywhere in the capture is narrower than a real bit, and taking it made
+    // UART auto-baud guess wildly high and decode nothing but framing errors.
+    // Instead, bin the pulse widths and return the shortest width that recurs
+    // often enough to be part of the signal.  Bins are proportional (each is
+    // 25% wider than the last) so one table spans microseconds to milliseconds
+    // without assuming a rate.
+    constexpr int kBins = 48;
+    uint32_t lo[kBins];
+    uint32_t count[kBins] = {0};
+    uint64_t sum[kBins] = {0};
+    uint32_t w = 1;
+    for (int i = 0; i < kBins; ++i) {
+        lo[i] = w;
+        w = w + (w >> 2) + 1;          // ~1.25x per bin
+    }
+
+    uint32_t total = 0;
     int64_t lastEdge = -1;
     bool prev = lvl(p, first, channel);
     for (uint32_t i = first + 1; i < end; ++i) {
         const bool cur = lvl(p, i, channel);
-        if (cur != prev) {
-            if (lastEdge >= 0) {
-                const uint32_t w = static_cast<uint32_t>(i - lastEdge);
-                if (w < best) best = w;
-            }
-            lastEdge = i;
-            prev = cur;
+        if (cur == prev) continue;
+        if (lastEdge >= 0) {
+            const uint32_t width = static_cast<uint32_t>(i - lastEdge);
+            int b = kBins - 1;
+            while (b > 0 && lo[b] > width) --b;
+            count[b]++;
+            sum[b] += width;
+            total++;
+        }
+        lastEdge = i;
+        prev = cur;
+    }
+    if (total == 0) return 0;
+
+    // A real bit width shows up on a good fraction of the edges; a glitch does
+    // not.  Five percent is low enough to survive a mostly-idle line and high
+    // enough to reject the handful of spikes a long probe lead picks up.
+    // Return the mean width of the pulses that landed in the bin, not the
+    // bin's lower edge.  A bin spans 25%, and a bit width underestimated by
+    // that much accumulates two and a half bits of drift across a ten bit
+    // frame - enough to decode a stable stream into stable nonsense.
+    const uint32_t floorCount = total / 20 > 2 ? total / 20 : 2;
+    int best = -1;
+    for (int b = 0; b < kBins; ++b) {
+        if (count[b] >= floorCount) { best = b; break; }
+    }
+    if (best < 0) {
+        // Nothing recurred: fall back to the most populated bin.
+        best = 0;
+        for (int b = 1; b < kBins; ++b) {
+            if (count[b] > count[best]) best = b;
         }
     }
-    return best == 0xFFFFFFFFu ? 0 : best;
+    if (count[best] == 0) return 0;
+    return static_cast<uint32_t>((sum[best] + count[best] / 2) / count[best]);
 }
 
 // ---------------------------------------------------------------------------
