@@ -52,6 +52,7 @@ static const char* TAG = "parlio";
 // register, so an EOF lands exactly on a ring boundary.  The ring is a whole
 // number of these.
 constexpr size_t kRingChunk = 65280;
+
 constexpr int    kRingChunkTry[] = {3, 2, 1};
 
 class SamplerParlio final : public ISampler {
@@ -169,6 +170,8 @@ public:
         _written = 0;
         _isrUs   = 0;
         _isrMaxUs = 0;
+        _pendPtr = nullptr;
+        _pendLen = 0;
         xSemaphoreTake(_doneSem, 0);
 
         esp_err_t err = parlio_rx_unit_enable(_unit, true);
@@ -253,21 +256,48 @@ private:
                                     void* ctx) {
         (void)unit;
         auto* self = static_cast<SamplerParlio*>(ctx);
+        uint8_t* dst = self->_dst;
+        if (!dst) return false;
+
+        if (self->_direct) {
+            // Nothing is copied while sampling; just count.
+            uint32_t written = self->_written;
+            if (written >= self->_target) return false;
+            uint32_t n = edata->recv_bytes;
+            if (written + n > self->_target) n = self->_target - written;
+            self->_written = written + n;
+            if (self->_written >= self->_target) {
+                BaseType_t hpw = pdFALSE;
+                xSemaphoreGiveFromISR(self->_doneSem, &hpw);
+                return hpw == pdTRUE;
+            }
+            return false;
+        }
+
+        // Copy the descriptor *before* the one that just completed.  Reading a
+        // descriptor the moment GDMA reports it done leaves its last byte
+        // unsettled - one corrupted sample per boundary, which showed up as a
+        // steady ~1 extra edge per 4092 samples at every rate and depth, and
+        // looked exactly like probe noise.  Staying one descriptor behind costs
+        // 4 kB of latency and nothing else.
+        const void* prevPtr = self->_pendPtr;
+        const uint32_t prevLen = self->_pendLen;
+        self->_pendPtr = edata->data;
+        self->_pendLen = edata->recv_bytes;
+        if (!prevPtr) return false;
+
         uint32_t written = self->_written;
         if (written >= self->_target) return false;
-
-        uint32_t n = edata->recv_bytes;
+        uint32_t n = prevLen;
         if (written + n > self->_target) n = self->_target - written;
 
-        if (!self->_direct) {
-            const int64_t t0 = esp_timer_get_time();
-            memcpy(self->_dst + written, edata->data, n);
-            const uint32_t us = static_cast<uint32_t>(esp_timer_get_time() - t0);
-            self->_isrUs += us;
-            if (us > self->_isrMaxUs) self->_isrMaxUs = us;
-        }
-        self->_written = written + n;
+        const int64_t t0 = esp_timer_get_time();
+        memcpy(dst + written, prevPtr, n);
+        const uint32_t us = static_cast<uint32_t>(esp_timer_get_time() - t0);
+        self->_isrUs += us;
+        if (us > self->_isrMaxUs) self->_isrMaxUs = us;
 
+        self->_written = written + n;
         if (self->_written >= self->_target) {
             BaseType_t hpw = pdFALSE;
             xSemaphoreGiveFromISR(self->_doneSem, &hpw);
@@ -306,6 +336,8 @@ private:
 
     uint8_t* volatile _dst      = nullptr;
     volatile uint32_t _written  = 0;
+    const void* volatile _pendPtr = nullptr;   // descriptor awaiting its copy
+    volatile uint32_t _pendLen  = 0;
     volatile uint32_t _isrUs    = 0;
     volatile uint32_t _isrMaxUs = 0;
     volatile bool     _direct   = true;
