@@ -408,6 +408,7 @@ decode kind=spi clk=4 mosi=5 miso=6 cs=7 cpol=0 cpha=0 order=msb bits=8</code></
 
   <h2 id="api-gen">内置测试信号发生器</h2>
   <p><code>gen ch=N [freq=Hz] [duty=0..100]</code> 会用 LEDC 驱动该通道的引脚，同时仍然对其采样，因此<b>不接任何线也能验证整条通路</b>。</p>
+  <p><code>gen pin=&lt;gpio&gt;</code> 可以驱动<b>任意 GPIO</b>。把空闲引脚（例如 G47 = M5-Bus 第 23 针）用跳线直接接到某个测量通道，就能连<b>外部路径</b>一起验证——焊盘、真实导线、焊盘。最多可同时驱动 4 个引脚。</p>
   <pre><code>&gt; gen ch=0 freq=1000000 duty=50
 {"ok":true,"gen":"on","ch":0,"pin":2,"freq":1000000,"duty":50,"res_bits":5}
 &gt; gen off=1</code></pre>

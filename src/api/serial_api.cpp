@@ -568,40 +568,65 @@ void App::apiCursor(const char* line) {
 // ---------------------------------------------------------------------------
 void App::apiGen(const char* line) {
     char w[16];
+
     if (argWord(line, "off", w, sizeof(w))) {
-        for (int ch = 0; ch < LA_MAX_CHANNELS; ++ch) {
-            if (_genMask & (1u << ch)) {
-                ledcDetach(kChannelPin[ch]);
-                gpio_input_enable(static_cast<gpio_num_t>(kChannelPin[ch]));
-            }
+        for (int i = 0; i < kMaxGenPins; ++i) {
+            if (_genPins[i] < 0) continue;
+            const gpio_num_t g = static_cast<gpio_num_t>(_genPins[i]);
+            ledcDetach(_genPins[i]);
+            // Detaching alone can leave the pad still driving.  That matters
+            // when a spare pin is wired to a probe for a loopback test: a pin
+            // left holding a level fights whatever drives the other end and the
+            // capture reads a flat line.  Force it back to input only.
+            gpio_set_direction(g, GPIO_MODE_INPUT);
+            gpio_input_enable(g);
+            _genPins[i] = -1;
         }
-        _genMask = 0;
         Serial.print("{\"ok\":true,\"gen\":\"off\"}\n");
         return;
     }
 
-    int32_t ch = -1;
+    int32_t ch = -1, pinArg = -1;
     uint32_t freq = 1000000, duty = 50;
     argI32(line, "ch", &ch);
+    argI32(line, "pin", &pinArg);
     argU32(line, "freq", &freq);
     argU32(line, "duty", &duty);
-    if (ch < 0 || ch >= LA_MAX_CHANNELS) { apiFail("ch must be 0..7"); return; }
+
+    int pin;
+    if (pinArg >= 0) {
+        pin = pinArg;                       // any GPIO, for external loopback
+    } else if (ch >= 0 && ch < LA_MAX_CHANNELS) {
+        pin = kChannelPin[ch];
+    } else {
+        apiFail("give ch=0..7 or pin=<gpio>");
+        return;
+    }
     if (freq == 0) { apiFail("freq must be > 0"); return; }
     if (duty > 100) duty = 100;
+
+    // ledcAttach refuses a pin that is already driven, so a second `gen` on the
+    // same pin would silently leave the old frequency running.
+    int slot = -1;
+    for (int i = 0; i < kMaxGenPins; ++i) {
+        if (_genPins[i] == pin) {
+            ledcDetach(pin);
+            _genPins[i] = -1;
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        for (int i = 0; i < kMaxGenPins; ++i) {
+            if (_genPins[i] < 0) { slot = i; break; }
+        }
+    }
+    if (slot < 0) { apiFail("no free generator slot; send gen off=1"); return; }
 
     // LEDC counts to 2^resolution per period off its source clock, so the
     // resolution has to shrink as the frequency rises.  Which source the
     // hardware picks depends on the target, so start from the theoretical
     // best and walk down until the driver accepts it.
-    const int pin = kChannelPin[ch];
-
-    // ledcAttach refuses a pin that is already driven, so a second `gen` on the
-    // same channel would silently leave the old frequency running.
-    if (_genMask & (1u << ch)) {
-        ledcDetach(pin);
-        _genMask &= static_cast<uint8_t>(~(1u << ch));
-    }
-
     int res = 14;
     while (res > 1 && (static_cast<uint64_t>(freq) << res) > 80000000ULL) res--;
     bool attached = false;
@@ -614,12 +639,19 @@ void App::apiGen(const char* line) {
     }
     const uint32_t maxDuty = (1u << res) - 1;
     ledcWrite(pin, (maxDuty * duty) / 100);
-    gpio_input_enable(static_cast<gpio_num_t>(pin));   // let the sampler see it
-    _genMask |= static_cast<uint8_t>(1u << ch);
+    // ledc_set_pin leaves the pad output-only; the sampler needs the input path
+    // back on, and for an external loopback the driven pad may itself be probed.
+    gpio_input_enable(static_cast<gpio_num_t>(pin));
+    _genPins[slot] = static_cast<int8_t>(pin);
 
-    Serial.printf("{\"ok\":true,\"gen\":\"on\",\"ch\":%d,\"pin\":%d,\"freq\":%u,"
-                  "\"duty\":%u,\"res_bits\":%d}\n",
-                  (int)ch, pin, (unsigned)freq, (unsigned)duty, res);
+    // Report which probe channel, if any, sits on that pin.
+    int onChannel = -1;
+    for (int i = 0; i < LA_MAX_CHANNELS; ++i) {
+        if (kChannelPin[i] == pin) { onChannel = i; break; }
+    }
+    Serial.printf("{\"ok\":true,\"gen\":\"on\",\"pin\":%d,\"channel\":%d,"
+                  "\"freq\":%u,\"duty\":%u,\"res_bits\":%d}\n",
+                  pin, onChannel, (unsigned)freq, (unsigned)duty, res);
 }
 
 void App::apiSave(const char* line) {

@@ -101,7 +101,11 @@ private:
     void apiGen(const char* line);
     void apiFail(const char* why);
 
-    uint8_t _genMask = 0;   // probe pins currently driven by the test generator
+    // GPIOs currently driven by the test generator.  Not restricted to probe
+    // channels: driving a spare pin and wiring it to a probe is the only way to
+    // exercise the real external path, pad to pad through actual wire.
+    static constexpr int kMaxGenPins = 4;
+    int8_t _genPins[kMaxGenPins] = {-1, -1, -1, -1};
 
     // ---- state ------------------------------------------------------------
     CaptureConfig  _cfg;

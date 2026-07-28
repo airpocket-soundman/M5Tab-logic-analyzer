@@ -384,6 +384,7 @@ decode kind=spi clk=4 mosi=5 miso=6 cs=7 cpol=0 cpha=0 order=msb bits=8</code></
 
   <h2 id="api-gen">Built-in test generator</h2>
   <p><code>gen ch=N [freq=Hz] [duty=0..100]</code> drives that channel's pin with LEDC while still sampling it, so <b>the whole path can be validated with nothing connected.</b></p>
+  <p><code>gen pin=&lt;gpio&gt;</code> drives <b>any GPIO</b>. Jumper a spare pin (G47 on M5-Bus 23, say) to a probe channel and the test then covers the <b>external</b> path as well — pad, real wire, pad. Up to four pins at once.</p>
   <pre><code>&gt; gen ch=0 freq=1000000 duty=50
 {"ok":true,"gen":"on","ch":0,"pin":2,"freq":1000000,"duty":50,"res_bits":5}
 &gt; gen off=1</code></pre>
