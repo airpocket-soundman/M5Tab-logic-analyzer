@@ -229,6 +229,36 @@ USB CDC (書き込みに使うのと同じポート) が行指向の制御 API �
 外部信号源がなくても `gen` コマンドでプローブピンに既知の方形波を出せるので、
 配線なしで動作確認ができます。
 
+## テスト用信号源 (AtomS3)
+
+実機検証には M5Stack AtomS3 を独立した信号源として使えます
+([tools/atoms3-siggen](tools/atoms3-siggen))。本体内蔵の `gen` は同じチップが
+自分自身を駆動するのに対し、こちらは**別のクロックを持つ別基板が実配線を駆動**
+するので、外部経路まで含めた検証になります。
+
+```bash
+pio run -d tools/atoms3-siggen -t upload
+```
+
+| AtomS3 | Tab5 | | AtomS3 | Tab5 |
+| --- | --- | --- | --- | --- |
+| G1 | CH0 (G2) | | G6 | CH3 (G5) |
+| G2 | CH1 (G3) | | G7 | CH4 (G16) |
+| G5 | CH2 (G4) | | G8 | CH5 (G17) |
+| GND | GND (M5-Bus 1/3/5) | | | |
+
+USB CDC 経由でアナライザと同じ書式のコマンドを受けます。
+
+```
+square [pin=<gpio>] freq=100000 [duty=50]
+uart   [pin=<gpio>] baud=115200 [text=M5Tab5]
+counter period=<us>     6 本同時の同期バイナリカウンタ
+spi    [clk_hz=] [bytes=]
+off
+```
+
+`counter` は全ピンを同一命令で書き換えるため、**チャンネル間の同時性**を検証できます。
+
 ## ドキュメントの再生成
 
 マニュアルは 1 つのシェル (CSS / JS / レイアウト) を 3 言語で共有する構成で、
