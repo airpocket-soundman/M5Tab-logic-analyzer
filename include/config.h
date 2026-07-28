@@ -65,6 +65,16 @@ static constexpr int8_t kChannelPin[LA_MAX_CHANNELS] = {
 // read as a steady high instead of picking up noise.
 #define LA_PROBE_PULLUP 1
 
+// PARLIO's soft delimiter cannot express "never end a frame": its EOF length
+// register is 16 bits and zero is rejected, so a frame boundary lands at least
+// every 65535 samples and the DMA disturbs a sample or two each time.  A level
+// delimiter does accept eof_data_len = 0, meaning "run until the enable signal
+// goes inactive" - which never happens if the enable is tied active.  This pin
+// supplies that permanently asserted enable.  The chip drives it itself, so
+// nothing has to be wired to it; it simply must not be used for anything else.
+// M5-Bus pin 8.
+#define LA_PIN_VALID 45
+
 // ---------------------------------------------------------------------------
 //  microSD (Tab5 uses SDMMC 4bit).  Overridden at runtime by M5.getPin() when
 //  M5Unified knows the board, these are only the fallback values.

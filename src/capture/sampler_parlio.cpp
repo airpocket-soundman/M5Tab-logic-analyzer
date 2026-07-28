@@ -112,7 +112,7 @@ public:
         uc.exp_clk_freq_hz   = cfg.rateHz;
         uc.clk_in_gpio_num   = GPIO_NUM_NC;
         uc.clk_out_gpio_num  = GPIO_NUM_NC;
-        uc.valid_gpio_num    = GPIO_NUM_NC;
+        uc.valid_gpio_num    = static_cast<gpio_num_t>(LA_PIN_VALID);
         for (int i = 0; i < PARLIO_RX_UNIT_MAX_DATA_WIDTH; ++i) {
             uc.data_gpio_nums[i] = (i < LA_MAX_CHANNELS)
                                        ? static_cast<gpio_num_t>(kChannelPin[i])
@@ -139,14 +139,36 @@ public:
             return false;
         }
 
-        parlio_rx_soft_delimiter_config_t sd = {};
-        sd.sample_edge     = PARLIO_SAMPLE_EDGE_POS;
-        sd.bit_pack_order  = PARLIO_BIT_PACK_ORDER_LSB;
-        sd.eof_data_len    = kRingChunk;   // lands on a ring boundary
-        sd.timeout_ticks   = 0;
-        err = parlio_new_rx_soft_delimiter(&sd, &_deli);
+        // Hold the enable line asserted from the chip's own pad so the level
+        // delimiter never sees a frame end.
+        gpio_set_direction(static_cast<gpio_num_t>(LA_PIN_VALID),
+                           GPIO_MODE_INPUT_OUTPUT);
+        gpio_set_level(static_cast<gpio_num_t>(LA_PIN_VALID), 1);
+
+        parlio_rx_level_delimiter_config_t ld = {};
+        ld.valid_sig_line_id = LA_MAX_CHANNELS;   // first line past the data
+        ld.sample_edge       = PARLIO_SAMPLE_EDGE_POS;
+        ld.bit_pack_order    = PARLIO_BIT_PACK_ORDER_LSB;
+        ld.eof_data_len      = 0;                 // end only on enable inactive
+        ld.timeout_ticks     = 0;
+        ld.flags.active_low_en = 0;
+        err = parlio_new_rx_level_delimiter(&ld, &_deli);
+        _usingLevel = (err == ESP_OK);
+
+        if (!_usingLevel) {
+            // Fall back to the soft delimiter rather than refuse to sample; the
+            // periodic EOF costs about one spurious edge per 65280 samples.
+            ESP_LOGW(TAG, "level delimiter unavailable (%s), falling back",
+                     esp_err_to_name(err));
+            parlio_rx_soft_delimiter_config_t sd = {};
+            sd.sample_edge     = PARLIO_SAMPLE_EDGE_POS;
+            sd.bit_pack_order  = PARLIO_BIT_PACK_ORDER_LSB;
+            sd.eof_data_len    = kRingChunk;
+            sd.timeout_ticks   = 0;
+            err = parlio_new_rx_soft_delimiter(&sd, &_deli);
+        }
         if (err != ESP_OK) {
-            if (reason) *reason = "parlio_new_rx_soft_delimiter failed";
+            if (reason) *reason = "parlio delimiter creation failed";
             teardown();
             return false;
         }
@@ -185,9 +207,12 @@ public:
         rc.flags.partial_rx_en  = 1;   // infinite, circular over the ring
         rc.flags.indirect_mount = 0;   // DMA writes our ring directly
 
+        gpio_set_level(static_cast<gpio_num_t>(LA_PIN_VALID), 1);
         const int64_t t0 = esp_timer_get_time();
         err = parlio_rx_unit_receive(_unit, _ring, _ringBytes, &rc);
-        if (err == ESP_OK) {
+        // A level delimiter starts as soon as its enable is asserted, which it
+        // permanently is; only the soft delimiter needs an explicit kick.
+        if (err == ESP_OK && !_usingLevel) {
             err = parlio_rx_soft_delimiter_start_stop(_unit, _deli, true);
         }
         if (err != ESP_OK) {
@@ -207,7 +232,7 @@ public:
         const BaseType_t got = xSemaphoreTake(_doneSem, pdMS_TO_TICKS(waitMs));
         const int64_t t1 = esp_timer_get_time();
 
-        parlio_rx_soft_delimiter_start_stop(_unit, _deli, false);
+        if (!_usingLevel) parlio_rx_soft_delimiter_start_stop(_unit, _deli, false);
         parlio_rx_unit_disable(_unit);
 
         uint32_t written = _written;
@@ -234,17 +259,18 @@ public:
     void describeLast(char* out, size_t len) const override {
         if (!len) return;
         if (_direct) {
-            snprintf(out, len, "direct (<=%uKiB ring, no realtime copy), wall %.2f MSa/s",
-                     (unsigned)(_ringBytes / 1024), _wallRateHz / 1e6);
+            snprintf(out, len, "direct (<=%uKiB ring, no realtime copy), %s, wall %.2f MSa/s",
+                     (unsigned)(_ringBytes / 1024),
+                     _usingLevel ? "no EOF" : "soft EOF", _wallRateHz / 1e6);
         } else {
             // How much of the capture window the copy ISR consumed.  Past ~80%
             // the DMA is about to lap the copier and samples get corrupted.
             const double duty = _lastElapsedUs > 0
                 ? 100.0 * static_cast<double>(_isrUs) / _lastElapsedUs
                 : 0.0;
-            snprintf(out, len, "stream, copy ISR %.0f%% busy (max %uus), wall %.2f MSa/s%s",
-                     duty, (unsigned)_isrMaxUs, _wallRateHz / 1e6,
-                     duty > 80.0 ? " OVERRUN RISK" : "");
+            snprintf(out, len, "stream, copy ISR %.0f%% busy (max %uus), %s, wall %.2f MSa/s%s",
+                     duty, (unsigned)_isrMaxUs, _usingLevel ? "no EOF" : "soft EOF",
+                     _wallRateHz / 1e6, duty > 80.0 ? " OVERRUN RISK" : "");
         }
     }
 
@@ -343,6 +369,7 @@ private:
     volatile bool     _direct   = true;
     uint32_t          _target   = 0;
     uint32_t          _requestedRate = 1000000;
+    bool              _usingLevel    = false;
     uint32_t          _lastElapsedUs = 0;
     double            _wallRateHz    = 0.0;
 };

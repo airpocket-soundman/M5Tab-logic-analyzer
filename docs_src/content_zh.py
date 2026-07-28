@@ -478,6 +478,18 @@ Send-Cmd 'ping'</code></pre>
     <tr><td><b>stream</b></td><td>深度 &gt; 191 kSa</td><td>每个描述符完成时在中断中复制到 PSRAM，复制必须跟得上采样率</td></tr>
   </table>
 
+  <h2 id="noeof">消除帧边界</h2>
+  <p>最初使用的是软分隔符，它会<b>每 65280 个采样多出约 1 个杂散边沿</b>。这个周期以采样数计是恒定的、以时间计则不是，而且在完全没有接线的通道上也以同样的比例出现——因此不是外部拾取，而是与 PARLIO 的帧结束同步。</p>
+  <p>软分隔符无法表达「永不结束帧」：<code>eof_data_len</code> 不接受 0，而寄存器只有 16 位，所以即使无限事务并不需要边界，也至少每 65535 个采样出现一次。电平分隔符则接受 <code>eof_data_len = 0</code>（「运行到使能信号失效为止」），因此把 <b>G45 固定为常时有效的使能信号</b>，帧就永远不会结束。该引脚由芯片自行驱动，无需接线，但<b>不能挪作他用</b>。</p>
+  <table>
+    <tr><th class="num">深度</th><th class="num">修正前的杂散边沿</th><th class="num">修正后</th></tr>
+    <tr><td class="num">131072</td><td class="num">+3</td><td class="num">+1</td></tr>
+    <tr><td class="num">1048576</td><td class="num">+26</td><td class="num">0</td></tr>
+    <tr><td class="num">4194304</td><td class="num">+73</td><td class="num">-1</td></tr>
+    <tr><td class="num">8388608</td><td class="num">—</td><td class="num">-3</td></tr>
+  </table>
+  <p>若无法分配电平分隔符则自动退回软分隔符，Info 面板会相应显示 <code>no EOF</code> 或 <code>soft EOF</code>。</p>
+
   <h2 id="cpu">CPU 引擎</h2>
   <p>直接读取 GPIO 输入寄存器，并用编译期从 config.h 的引脚映射展开的移位序列压成 1 字节。默认映射下所有通道都在 bank 0，因此只需一次寄存器读取。</p>
   <p>节拍控制不使用延时循环，而是用 RISC-V 的周期计数器：为每个采样计算截止时刻并自旋等待。当请求速率超过循环极限时，截止时刻总在过去，循环自然进入自由运行，并返回<b>实测速率</b>。这正是时间轴不会说谎的原因。</p>

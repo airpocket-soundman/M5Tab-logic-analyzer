@@ -478,6 +478,18 @@ Send-Cmd 'ping'</code></pre>
     <tr><td><b>stream</b></td><td>depth &gt; 191 kSa</td><td>Each finished descriptor is copied to PSRAM from the ISR, so the copy has to keep up with the sample rate</td></tr>
   </table>
 
+  <h2 id="noeof">Getting rid of the frame boundary</h2>
+  <p>The soft delimiter came first, and it added <b>about one spurious edge every 65280 samples</b>. The period was constant in samples rather than in time, and it appeared at the same rate on a channel with no wire attached at all - so it was not pickup, it was locked to PARLIO's end-of-frame.</p>
+  <p>A soft delimiter cannot express "never end a frame": <code>eof_data_len</code> rejects zero and the register is 16 bits, so a boundary lands at least every 65535 samples even though an infinite transaction has no use for one. A level delimiter does accept <code>eof_data_len = 0</code>, meaning "run until the enable goes inactive", so <b>G45 is tied permanently active as that enable</b> and no frame ever ends. The chip drives the pin itself, so nothing has to be wired to it, but <b>it cannot be used for anything else</b>.</p>
+  <table>
+    <tr><th class="num">Depth</th><th class="num">Spurious edges before</th><th class="num">After</th></tr>
+    <tr><td class="num">131072</td><td class="num">+3</td><td class="num">+1</td></tr>
+    <tr><td class="num">1048576</td><td class="num">+26</td><td class="num">0</td></tr>
+    <tr><td class="num">4194304</td><td class="num">+73</td><td class="num">-1</td></tr>
+    <tr><td class="num">8388608</td><td class="num">—</td><td class="num">-3</td></tr>
+  </table>
+  <p>If a level delimiter cannot be allocated it falls back to the soft one, and the Info panel says <code>no EOF</code> or <code>soft EOF</code> accordingly.</p>
+
   <h2 id="cpu">The CPU engine</h2>
   <p>It reads the GPIO input registers directly and packs the bits using a shift sequence expanded at compile time from the pin map in config.h. With the default map every channel is in bank 0, so that is a single register read.</p>
   <p>Pacing uses the RISC-V cycle counter rather than a delay loop: a deadline is computed per sample and the loop spins until it passes. When the requested rate is faster than the loop can go, the deadline is always in the past, the loop free-runs, and the <b>measured</b> rate is reported. That is what keeps the time axis honest.</p>

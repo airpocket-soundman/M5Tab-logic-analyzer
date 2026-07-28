@@ -129,6 +129,15 @@ void releaseOutput() {
 // resistor.
 uint32_t g_drive = 2;   // GPIO_DRIVE_CAP_2 is the chip default
 
+// releaseOutput() leaves every pin high impedance, so any mode that drives the
+// pads itself has to claim them back first.
+void claimOutputs() {
+    for (int i = 0; i < kNumPins; ++i) {
+        pinMode(kPins[i], OUTPUT);
+        digitalWrite(kPins[i], HIGH);
+    }
+}
+
 void applyDrive() {
     for (int i = 0; i < kNumPins; ++i) {
         gpio_set_drive_capability(static_cast<gpio_num_t>(kPins[i]),
@@ -198,6 +207,7 @@ void cmdCounter(const char* args) {
     if (periodUs < 2) periodUs = 2;
 
     releaseOutput();
+    claimOutputs();
     g_count = 0;
     g_timer = timerBegin(1000000);              // 1 MHz tick
     if (!g_timer) { fail("no hardware timer"); return; }
@@ -223,6 +233,8 @@ void cmdSpi(const char* args) {
     if (nbytes == 0 || nbytes > 16) nbytes = 4;
 
     releaseOutput();
+    claimOutputs();
+    applyDrive();
     g_mode = Mode::Spi;
     Serial.printf("{\"ok\":true,\"mode\":\"spi\",\"clk\":%d,\"mosi\":%d,\"miso\":%d,"
                   "\"cs\":%d,\"clk_hz\":%u,\"bytes\":%u}\n",
