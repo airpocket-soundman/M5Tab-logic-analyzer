@@ -62,6 +62,13 @@ int8_t nextChannel(int8_t c, bool allowNone) {
     return n;
 }
 
+// Two buttons look the same on screen only if every visual property matches.
+bool sameButton(const Button& a, const Button& b) {
+    return a.id == b.id && a.active == b.active && a.enabled == b.enabled &&
+           a.tint == b.tint && a.r.x == b.r.x && a.r.y == b.r.y &&
+           a.r.w == b.r.w && a.r.h == b.r.h && strcmp(a.text, b.text) == 0;
+}
+
 const char* chanText(int8_t c, char* buf, size_t len) {
     if (c < 0) snprintf(buf, len, "--");
     else snprintf(buf, len, "CH%d", c);
@@ -108,7 +115,28 @@ void App::begin() {
     applyConfig();
 
     _wave.fit(0);
+    paintChromeBackground();
     _dirtyChrome = _dirtyWave = _dirtyPanel = true;
+}
+
+// The bars and panel backgrounds never change, so they are painted once.  Every
+// later update only touches the widgets that actually differ, which is what
+// keeps the chrome from flashing on each capture.
+void App::paintChromeBackground() {
+    auto& d = M5.Display;
+    d.fillRect(_rTop.x, _rTop.y, _rTop.w, _rTop.h, kBg);
+    d.drawFastHLine(0, _rTop.h - 1, _rTop.w, kPanelEdge);
+    d.fillRect(_rBottom.x, _rBottom.y, _rBottom.w, _rBottom.h, kBg);
+    d.drawFastHLine(_rBottom.x, _rBottom.y, _rBottom.w, kPanelEdge);
+    d.fillRect(_rPanel.x, _rPanel.y, _rPanel.w, _rPanel.h, kBg);
+    d.drawFastHLine(_rPanel.x, _rPanel.y, _rPanel.w, kPanelEdge);
+    d.setFont(&fonts::Font2);
+    d.setTextDatum(textdatum_t::top_left);
+    d.setTextColor(kTextDim, kBg);
+    d.drawString("CURSORS", 12, _rPanel.y + 8);
+    d.drawString("MEASUREMENTS", 300, _rPanel.y + 8);
+    d.drawString("STATUS", 980, _rPanel.y + 8);
+    _prevBtnCount = 0;
 }
 
 void App::buildLayout() {
@@ -125,6 +153,19 @@ void App::buildLayout() {
 
     const int ow = 940, oh = 560;
     _rOverlay = {(W - ow) / 2, (H - oh) / 2, ow, oh};
+
+#if LA_HAVE_CANVAS
+    // Compose the plot off-screen so the panel never shows a half-drawn frame.
+    // ~1.2 MB of the 32 MB PSRAM; if it cannot be had we simply draw direct and
+    // accept the tearing rather than refuse to run.
+    if (!_canvasOk) {
+        const Rect& a = _wave.area();
+        _canvas.setPsram(true);
+        _canvas.setColorDepth(16);
+        _canvasOk = _canvas.createSprite(a.w, a.h) != nullptr;
+        if (!_canvasOk) toast("no PSRAM for the plot buffer; drawing direct");
+    }
+#endif
 }
 
 void App::applyConfig() {
@@ -211,8 +252,7 @@ void App::serviceCapture() {
         _btnCount = 0;
         buildTopBar();
         buildBottomBar();
-        drawTopBar();
-        drawBottomBar();
+        drawChrome();
         _dirtyChrome = false;
     }
 
@@ -284,20 +324,36 @@ void App::autoScale(uint32_t sampleCount) {
     const double sps = _info.secondsPerSample();
     if (sps <= 0 || sampleCount == 0) return;
 
-    double narrowest = 0.0;   // in samples
+    // Collect the narrowest pulse on each active channel.
+    double narrow[LA_MAX_CHANNELS];
+    int n = 0;
     for (int ch = 0; ch < LA_MAX_CHANNELS; ++ch) {
         if (!_chan[ch].enabled || _stats[ch].edges == 0) continue;
+        double best = 0;
         const double widths[2] = {_stats[ch].minHighSec, _stats[ch].minLowSec};
         for (double w : widths) {
             if (w <= 0) continue;
-            const double s = w / sps;
-            if (narrowest <= 0 || s < narrowest) narrowest = s;
+            const double samples = w / sps;
+            if (best <= 0 || samples < best) best = samples;
         }
+        if (best > 0) narrow[n++] = best;
     }
-    if (narrowest <= 0) return;          // nothing toggled: the fit view is all there is
+    if (n == 0) return;          // nothing toggled: the fit view is all there is
+
+    // Scale to the *median* channel rather than the fastest one.  Taking the
+    // global minimum lets a single fast line - an SPI clock next to a slow
+    // UART, say - zoom in so far that every other channel becomes a flat line,
+    // which is the same "cannot see the pattern" problem as fitting everything.
+    for (int i = 1; i < n; ++i) {
+        const double v = narrow[i];
+        int j = i - 1;
+        while (j >= 0 && narrow[j] > v) { narrow[j + 1] = narrow[j]; --j; }
+        narrow[j + 1] = v;
+    }
+    const double reference = narrow[n / 2];
 
     constexpr double kPixelsPerPulse = 3.0;
-    double target = narrowest / kPixelsPerPulse;
+    double target = reference / kPixelsPerPulse;
     if (target < 1.0 / 64.0) target = 1.0 / 64.0;
 
     const double fitSpp = _wave.samplesPerPixel();
@@ -600,6 +656,7 @@ void App::handleTouch() {
         // Tapping outside an open overlay dismisses it.
         if (_overlay != Overlay::None && !_rOverlay.contains(x, y)) {
             _overlay = Overlay::None;
+            _panelBgDirty = true;
             _touchConsumed = true;
             _dirtyChrome = _dirtyWave = _dirtyPanel = true;
             return;
@@ -784,12 +841,12 @@ void App::onButton(int id) {
             _dirtyWave = _dirtyPanel = true;
             break;
 
-        case ID_OV_TRIG: _overlay = _overlay == Overlay::Trigger ? Overlay::None : Overlay::Trigger; _dirtyWave = _dirtyPanel = true; break;
-        case ID_OV_CHAN: _overlay = _overlay == Overlay::Channels ? Overlay::None : Overlay::Channels; _dirtyWave = _dirtyPanel = true; break;
-        case ID_OV_DEC:  _overlay = _overlay == Overlay::Decode ? Overlay::None : Overlay::Decode; _dirtyWave = _dirtyPanel = true; break;
-        case ID_OV_SAVE: _overlay = _overlay == Overlay::Storage ? Overlay::None : Overlay::Storage; _dirtyWave = _dirtyPanel = true; break;
-        case ID_OV_INFO: _overlay = _overlay == Overlay::Info ? Overlay::None : Overlay::Info; _dirtyWave = _dirtyPanel = true; break;
-        case ID_CLOSE:   _overlay = Overlay::None; _dirtyWave = _dirtyPanel = true; break;
+        case ID_OV_TRIG: _overlay = _overlay == Overlay::Trigger ? Overlay::None : Overlay::Trigger; _panelBgDirty = true; _dirtyWave = _dirtyPanel = true; break;
+        case ID_OV_CHAN: _overlay = _overlay == Overlay::Channels ? Overlay::None : Overlay::Channels; _panelBgDirty = true; _dirtyWave = _dirtyPanel = true; break;
+        case ID_OV_DEC:  _overlay = _overlay == Overlay::Decode ? Overlay::None : Overlay::Decode; _panelBgDirty = true; _dirtyWave = _dirtyPanel = true; break;
+        case ID_OV_SAVE: _overlay = _overlay == Overlay::Storage ? Overlay::None : Overlay::Storage; _panelBgDirty = true; _dirtyWave = _dirtyPanel = true; break;
+        case ID_OV_INFO: _overlay = _overlay == Overlay::Info ? Overlay::None : Overlay::Info; _panelBgDirty = true; _dirtyWave = _dirtyPanel = true; break;
+        case ID_CLOSE:   _overlay = Overlay::None; _panelBgDirty = true; _dirtyWave = _dirtyPanel = true; break;
 
         case ID_TM_AUTO:   _trig.mode = TrigMode::Auto; break;
         case ID_TM_NORMAL: _trig.mode = TrigMode::Normal; break;
@@ -883,95 +940,137 @@ void App::drawButton(const Button& b) {
     d.drawString(b.text, b.r.x + b.r.w / 2, b.r.y + b.r.h / 2);
 }
 
+// Draws left-aligned text inside a fixed-width field.  The glyphs paint their
+// own opaque background and only the leftover tail is cleared, so updating a
+// value never blanks a visible region.
+void App::drawField(const char* text, int x, int y, int w, uint16_t fg) {
+    auto& d = M5.Display;
+    d.setFont(&fonts::Font2);
+    d.setTextDatum(textdatum_t::top_left);
+    d.setTextColor(fg, kBg);
+    d.drawString(text, x, y);
+    const int tw = d.textWidth(text);
+    if (tw < w) d.fillRect(x + tw, y, w - tw, 19, kBg);
+}
+
 void App::drawTopBar() {
     auto& d = M5.Display;
-    d.fillRect(_rTop.x, _rTop.y, _rTop.w, _rTop.h, kBg);
-    d.drawFastHLine(0, _rTop.h - 1, _rTop.w, kPanelEdge);
 
+    // Only widgets whose appearance actually changed are repainted; the bar
+    // background was painted once at startup.
     for (int i = 0; i < _btnCount; ++i) {
-        if (_btn[i].r.y < _rTop.h) drawButton(_btn[i]);
+        if (_btn[i].r.y >= _rTop.h) continue;
+        if (i < _prevBtnCount && sameButton(_btn[i], _prevBtn[i])) continue;
+        drawButton(_btn[i]);
     }
 
-    // Status readout on the right.
+    // Status readout on the right, redrawn only when the text differs.
     char line[96], hz[24];
     formatHz(_info.actualRateHz, hz, sizeof(hz));
     const char* st = "IDLE";
     uint16_t stc = kTextDim;
     switch (_state) {
         case CaptureState::Sampling: st = "SAMPLING"; stc = kGood; break;
-        case CaptureState::Done:     st = _info.triggerIndex >= 0 ? "TRIG'D" : "UNTRIG"; stc = _info.triggerIndex >= 0 ? kAccent : kWarn; break;
+        case CaptureState::Done:     st = _info.triggerIndex >= 0 ? "TRIG'D" : "UNTRIG";
+                                     stc = _info.triggerIndex >= 0 ? kAccent : kWarn; break;
         case CaptureState::Failed:   st = "FAILED"; stc = kBad; break;
         default: break;
     }
     snprintf(line, sizeof(line), "%s  %s @ %s  #%u",
              engineName(_activeEngine), st, hz, (unsigned)_captureCount);
-    d.setFont(&fonts::Font2);
-    d.setTextDatum(textdatum_t::middle_right);
-    d.setTextColor(stc, kBg);
-    d.drawString(line, _rTop.w - 12, _rTop.h / 2);
+    if (strcmp(line, _statusPrev) != 0) {
+        snprintf(_statusPrev, sizeof(_statusPrev), "%s", line);
+        // The status sits to the right of the last button, so this strip is the
+        // only thing cleared - small enough that no flash is visible.
+        constexpr int kStatusX = 916;
+        d.fillRect(kStatusX, _rTop.y + 8, _rTop.w - 12 - kStatusX, _rTop.h - 16, kBg);
+        d.setFont(&fonts::Font2);
+        d.setTextDatum(textdatum_t::middle_right);
+        d.setTextColor(stc, kBg);
+        d.drawString(line, _rTop.w - 12, _rTop.h / 2);
+    }
+}
+
+// Paints both bars and then records what is on screen.  The snapshot has to be
+// taken wherever the chrome is drawn - serviceCapture() paints it too, before
+// blocking on a sweep - or the next incremental pass compares against a state
+// that was never displayed and skips a button that did change.
+void App::drawChrome() {
+    drawTopBar();
+    drawBottomBar();
+    memcpy(_prevBtn, _btn, sizeof(Button) * _btnCount);
+    _prevBtnCount = _btnCount;
 }
 
 void App::drawBottomBar() {
-    auto& d = M5.Display;
-    d.fillRect(_rBottom.x, _rBottom.y, _rBottom.w, _rBottom.h, kBg);
-    d.drawFastHLine(_rBottom.x, _rBottom.y, _rBottom.w, kPanelEdge);
     for (int i = 0; i < _btnCount; ++i) {
-        if (_btn[i].r.y >= _rBottom.y) drawButton(_btn[i]);
+        if (_btn[i].r.y < _rBottom.y) continue;
+        if (i < _prevBtnCount && sameButton(_btn[i], _prevBtn[i])) continue;
+        drawButton(_btn[i]);
     }
 }
 
 void App::drawPanel() {
     auto& d = M5.Display;
-    d.fillRect(_rPanel.x, _rPanel.y, _rPanel.w, _rPanel.h, kBg);
-    d.drawFastHLine(_rPanel.x, _rPanel.y, _rPanel.w, kPanelEdge);
-
+    // An overlay sits on top of the panel, so once it closes the area under it
+    // still holds the overlay's pixels.  Repaint the background in that case;
+    // ordinary value updates keep touching only their own field.
+    if (_panelBgDirty) {
+        d.fillRect(_rPanel.x, _rPanel.y, _rPanel.w, _rPanel.h, kBg);
+        d.drawFastHLine(_rPanel.x, _rPanel.y, _rPanel.w, kPanelEdge);
+        d.setFont(&fonts::Font2);
+        d.setTextDatum(textdatum_t::top_left);
+        d.setTextColor(kTextDim, kBg);
+        d.drawString("CURSORS", 12, _rPanel.y + 8);
+        d.drawString("MEASUREMENTS", 300, _rPanel.y + 8);
+        d.drawString("STATUS", 980, _rPanel.y + 8);
+        _panelBgDirty = false;
+    }
     const double sps = _info.secondsPerSample();
     char a[24], b[24], c[64];
 
     // --- cursor block -----------------------------------------------------
-    d.setFont(&fonts::Font2);
-    d.setTextDatum(textdatum_t::top_left);
-    d.setTextColor(kTextDim, kBg);
-    d.drawString("CURSORS", 12, _rPanel.y + 8);
-
     const int64_t origin = _info.triggerIndex >= 0 ? _info.triggerIndex : 0;
     int y = _rPanel.y + 30;
     if (_wave.cursorA >= 0) {
         formatSeconds((_wave.cursorA - origin) * sps, a, sizeof(a));
-        d.setTextColor(kCursorA, kBg);
         snprintf(c, sizeof(c), "A  %s", a);
-        d.drawString(c, 12, y);
+    } else {
+        c[0] = 0;
     }
+    drawField(c, 12, y, 270, kCursorA);
     y += 22;
     if (_wave.cursorB >= 0) {
         formatSeconds((_wave.cursorB - origin) * sps, b, sizeof(b));
-        d.setTextColor(kCursorB, kBg);
         snprintf(c, sizeof(c), "B  %s", b);
-        d.drawString(c, 12, y);
+    } else {
+        c[0] = 0;
     }
+    drawField(c, 12, y, 270, kCursorB);
     y += 22;
     if (_wave.cursorA >= 0 && _wave.cursorB >= 0) {
         const double dt = (_wave.cursorB - _wave.cursorA) * sps;
         formatSeconds(dt, a, sizeof(a));
         formatHz(dt != 0 ? 1.0 / (dt < 0 ? -dt : dt) : 0, b, sizeof(b));
-        d.setTextColor(kText, kBg);
         snprintf(c, sizeof(c), "dt %s", a);
-        d.drawString(c, 12, y);
-        d.drawString(b, 12, y + 22);
+        drawField(c, 12, y, 270, kText);
+        drawField(b, 12, y + 22, 270, kText);
+    } else {
+        drawField("", 12, y, 270, kText);
+        drawField("", 12, y + 22, 270, kText);
     }
 
     // --- measurement table ------------------------------------------------
-    d.setTextColor(kTextDim, kBg);
-    d.drawString("MEASUREMENTS", 300, _rPanel.y + 8);
     for (int ch = 0; ch < LA_MAX_CHANNELS; ++ch) {
         const int col = ch / 4;
         const int row = ch % 4;
         const int tx = 300 + col * 330;
         const int ty = _rPanel.y + 30 + row * 26;
         const ChannelStats& s = _stats[ch];
+        d.setFont(&fonts::Font2);
+        d.setTextDatum(textdatum_t::top_left);
         d.setTextColor(kChannel[ch], kBg);
         d.drawString(_chan[ch].name, tx, ty);
-        d.setTextColor(_chan[ch].enabled ? kText : kTextDim, kBg);
         if (s.valid && s.freqHz > 0) {
             formatHz(s.freqHz, a, sizeof(a));
             snprintf(c, sizeof(c), "%s  %.1f%%  %u edges", a, s.dutyPercent,
@@ -982,29 +1081,24 @@ void App::drawPanel() {
         } else {
             snprintf(c, sizeof(c), "static %s", s.highRatio > 0.5 ? "high" : "low");
         }
-        d.drawString(c, tx + 46, ty);
+        drawField(c, tx + 46, ty, 280, _chan[ch].enabled ? kText : kTextDim);
     }
 
     // --- status / toast ---------------------------------------------------
-    d.setTextColor(kTextDim, kBg);
-    d.drawString("STATUS", 980, _rPanel.y + 8);
-    d.setTextColor(kText, kBg);
     char depth[24];
     formatCount(_info.samples, depth, sizeof(depth));
     snprintf(c, sizeof(c), "%sSa captured", depth);
-    d.drawString(c, 980, _rPanel.y + 30);
+    drawField(c, 980, _rPanel.y + 30, 290, kText);
     formatSeconds(_info.samples * sps, a, sizeof(a));
     snprintf(c, sizeof(c), "window %s", a);
-    d.drawString(c, 980, _rPanel.y + 52);
+    drawField(c, 980, _rPanel.y + 52, 290, kText);
     if (_dec.kind != DecoderKind::None) {
         snprintf(c, sizeof(c), "decode: %u items", (unsigned)_anns.size());
-        d.drawString(c, 980, _rPanel.y + 74);
+    } else {
+        c[0] = 0;
     }
-    if (_toast[0]) {
-        d.setTextColor(kWarn, kBg);
-        d.setTextDatum(textdatum_t::top_left);
-        d.drawString(_toast, 980, _rPanel.y + 100);
-    }
+    drawField(c, 980, _rPanel.y + 74, 290, kText);
+    drawField(_toast, 980, _rPanel.y + 100, 290, kWarn);
 }
 
 void App::drawOverlay() {
@@ -1116,10 +1210,7 @@ void App::drawAll() {
     buildBottomBar();
     buildOverlay();
 
-    if (_dirtyChrome) {
-        drawTopBar();
-        drawBottomBar();
-    }
+    if (_dirtyChrome) drawChrome();
     if (_dirtyWave) {
         // Channel name gutter
         d.fillRect(0, _rWave.y, kLabelW, _rWave.h, kPanel);
@@ -1146,13 +1237,25 @@ void App::drawAll() {
             laneY += lane;
         }
 
-        _wave.draw(d, _buf, _info, _chan,
-                   _dec.kind != DecoderKind::None ? &_anns : nullptr);
+        const AnnotationList* anns =
+            _dec.kind != DecoderKind::None ? &_anns : nullptr;
+#if LA_HAVE_CANVAS
+        if (_canvasOk) {
+            // Compose off-screen, then hand the finished plot over in one go.
+            _wave.draw(_canvas, _buf, _info, _chan, anns, true);
+            _canvas.pushSprite(&M5.Display, _wave.area().x, _wave.area().y);
+        } else {
+            _wave.draw(d, _buf, _info, _chan, anns);
+        }
+#else
+        _wave.draw(d, _buf, _info, _chan, anns);
+#endif
     }
     if (_dirtyPanel) drawPanel();
 
     if ((_dirtyChrome || _dirtyWave || _dirtyPanel) && _overlay != Overlay::None) {
         drawOverlay();
     }
+
     _dirtyChrome = _dirtyWave = _dirtyPanel = false;
 }

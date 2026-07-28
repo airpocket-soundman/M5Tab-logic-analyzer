@@ -186,9 +186,9 @@ int main(int argc, char** argv) {
     frame(8);
     shot("02-capture-64k");
 
-    // Five doublings puts roughly 400 us on screen: one I2C transaction, a few
-    // UART frames and a couple of SPI bursts, all at once.
-    tapN(hit::kZoomIn, hit::kBotY, 5);
+    // Auto scale already lands near 400 us; two more doublings brings a single
+    // I2C transaction and a couple of UART frames up to a readable size.
+    tapN(hit::kZoomIn, hit::kBotY, 2);
     frame(4);
     shot("03-zoomed");
 

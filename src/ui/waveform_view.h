@@ -44,17 +44,34 @@ public:
     int64_t cursorA = -1;
     int64_t cursorB = -1;
 
+    // Render the plot.  With `canvasLocal` the output is placed at (0,0) so it
+    // can go into an off-screen canvas the caller then pushes to area().
     void draw(LaGfx& d, const CaptureBuffer& buf, const CaptureInfo& info,
               const ChannelConfig channels[LA_MAX_CHANNELS],
-              const AnnotationList* anns);
+              const AnnotationList* anns, bool canvasLocal = false);
 
     // Vertical span of one channel lane, for hit testing.
     int laneHeight(int enabledCount) const;
 
 private:
-    void drawRuler(LaGfx& d, const CaptureInfo& info, const Rect& r);
-    void drawTrace(LaGfx& d, const CaptureBuffer& buf, int ch, bool invert,
-                   uint16_t color, const Rect& lane, int lod);
+    // Time ruler ticks, shared between the ruler labels and the gridline
+    // columns so the two cannot disagree.
+    struct Ticks {
+        int x[32];
+        int n = 0;
+        bool has(int px) const {
+            for (int i = 0; i < n; ++i) {
+                if (x[i] == px) return true;
+            }
+            return false;
+        }
+    };
+
+    Ticks computeTicks(const CaptureInfo& info, const Rect& r) const;
+    void drawRuler(LaGfx& d, const CaptureInfo& info, const Rect& r, const Ticks& t);
+    void renderTraces(LaGfx& d, const CaptureBuffer& buf,
+                      const ChannelConfig channels[LA_MAX_CHANNELS],
+                      const Rect& band, int lane, int lod, const Ticks& t);
     void drawAnnotations(LaGfx& d, const AnnotationList& anns, const Rect& r);
     void drawCursors(LaGfx& d, const Rect& r, const CaptureInfo& info);
 

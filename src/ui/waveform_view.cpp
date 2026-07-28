@@ -1,8 +1,8 @@
 #include "waveform_view.h"
 
 #include <math.h>
-#include <string.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "theme.h"
 
@@ -96,32 +96,32 @@ int WaveformView::laneHeight(int enabledCount) const {
 // ---------------------------------------------------------------------------
 void WaveformView::draw(LaGfx& d, const CaptureBuffer& buf, const CaptureInfo& info,
                         const ChannelConfig channels[LA_MAX_CHANNELS],
-                        const AnnotationList* anns) {
+                        const AnnotationList* anns, bool canvasLocal) {
+    // Rendering is written against _area, so pointing it at the origin is all
+    // it takes to compose into an off-screen canvas instead of the display.
+    const Rect saved = _area;
+    if (canvasLocal) _area = Rect{0, 0, saved.w, saved.h};
     const Rect& a = _area;
-    d.startWrite();
-    d.fillRect(a.x, a.y, a.w, a.h, theme::kBg);
 
-    Rect ruler{a.x, a.y, a.w, theme::kRulerH};
-    drawRuler(d, info, ruler);
+    d.startWrite();
+
+    const Ticks ticks = computeTicks(info, Rect{a.x, a.y, a.w, theme::kRulerH});
+    drawRuler(d, info, Rect{a.x, a.y, a.w, theme::kRulerH}, ticks);
 
     const int nEnabled = countEnabled(channels);
     const int lane = laneHeight(nEnabled);
     const int lod = buf.pickLod(_spp);
 
-    int laneY = a.y + theme::kRulerH;
-    for (int ch = 0; ch < LA_MAX_CHANNELS; ++ch) {
-        if (!channels[ch].enabled) continue;
-        Rect r{a.x, laneY, a.w, lane};
-        // Lane separator
-        d.drawFastHLine(a.x, laneY + lane - 1, a.w, theme::kGrid);
-        drawTrace(d, buf, ch, channels[ch].invert, theme::kChannel[ch], r, lod);
-        laneY += lane;
-    }
+    const Rect band{a.x, a.y + theme::kRulerH, a.w,
+                    a.h - theme::kRulerH - theme::kDecodeRows * theme::kDecodeRowH};
+    renderTraces(d, buf, channels, band, lane, lod, ticks);
 
+    Rect annBand{a.x, a.y + a.h - theme::kDecodeRows * theme::kDecodeRowH,
+                 a.w, theme::kDecodeRows * theme::kDecodeRowH};
     if (anns && anns->size() > 0) {
-        Rect r{a.x, a.y + a.h - theme::kDecodeRows * theme::kDecodeRowH,
-               a.w, theme::kDecodeRows * theme::kDecodeRowH};
-        drawAnnotations(d, *anns, r);
+        drawAnnotations(d, *anns, annBand);
+    } else {
+        d.fillRect(annBand.x, annBand.y, annBand.w, annBand.h, theme::kBg);
     }
 
     // Trigger marker
@@ -137,14 +137,15 @@ void WaveformView::draw(LaGfx& d, const CaptureBuffer& buf, const CaptureInfo& i
 
     drawCursors(d, a, info);
     d.endWrite();
+
+    _area = saved;
 }
 
-void WaveformView::drawRuler(LaGfx& d, const CaptureInfo& info, const Rect& r) {
-    d.fillRect(r.x, r.y, r.w, r.h, theme::kPanel);
-    d.drawFastHLine(r.x, r.y + r.h - 1, r.w, theme::kPanelEdge);
-
+WaveformView::Ticks WaveformView::computeTicks(const CaptureInfo& info,
+                                               const Rect& r) const {
+    Ticks t;
     const double sps = info.secondsPerSample();
-    if (sps <= 0) return;
+    if (sps <= 0) return t;
 
     // Aim for a label roughly every 130 px.
     const double secPerPixel = _spp * sps;
@@ -154,98 +155,144 @@ void WaveformView::drawRuler(LaGfx& d, const CaptureInfo& info, const Rect& r) {
     const double tLeft = (_start - origin) * sps;
     const double tRight = tLeft + r.w * secPerPixel;
 
+    const double firstTick = ceil(tLeft / step) * step;
+    for (double s = firstTick; s <= tRight && t.n < (int)(sizeof(t.x) / sizeof(t.x[0]));
+         s += step) {
+        const double sample = origin + s / sps;
+        const int x = static_cast<int>(xForSample(sample) + 0.5);
+        if (x < r.x || x >= r.x + r.w) continue;
+        t.x[t.n++] = x;
+    }
+    return t;
+}
+
+void WaveformView::drawRuler(LaGfx& d, const CaptureInfo& info, const Rect& r,
+                             const Ticks& ticks) {
+    d.fillRect(r.x, r.y, r.w, r.h, theme::kPanel);
+    d.drawFastHLine(r.x, r.y + r.h - 1, r.w, theme::kPanelEdge);
+
+    const double sps = info.secondsPerSample();
+    if (sps <= 0) return;
+
+    const double secPerPixel = _spp * sps;
+    const double step = niceStep(secPerPixel * 130.0);
+    const int64_t origin = info.triggerIndex >= 0 ? info.triggerIndex : 0;
+
     d.setFont(&fonts::Font2);
     d.setTextDatum(textdatum_t::top_center);
     d.setTextColor(theme::kTextDim, theme::kPanel);
 
     char buf[24];
-    const double firstTick = ceil(tLeft / step) * step;
-    for (double t = firstTick; t <= tRight; t += step) {
-        const double sample = origin + t / sps;
-        const int x = static_cast<int>(xForSample(sample) + 0.5);
-        if (x < r.x || x >= r.x + r.w) continue;
+    for (int i = 0; i < ticks.n; ++i) {
+        const int x = ticks.x[i];
         d.drawFastVLine(x, r.y + r.h - 8, 7, theme::kGridMajor);
+        const double t = (sampleAtX(x) - origin) * sps;
         // Suppress -0 for the tick sitting exactly on the trigger.
         formatSeconds(fabs(t) < step * 1e-6 ? 0.0 : t, buf, sizeof(buf));
         d.drawString(buf, x, r.y + 3);
-        // Faint gridline down the plot.
-        d.drawFastVLine(x, r.y + r.h, _area.h - r.h, theme::kGrid);
     }
 }
 
-void WaveformView::drawTrace(LaGfx& d, const CaptureBuffer& buf, int ch, bool invert,
-                             uint16_t color, const Rect& lane, int lod) {
+// ---------------------------------------------------------------------------
+//  Traces
+// ---------------------------------------------------------------------------
+//  Rendered a column at a time, painting that column's background, gridline and
+//  every channel's segment together.  Two reasons:
+//
+//  * Nothing is ever left blank.  The panel has one framebuffer that is scanned
+//    out continuously, so clearing the whole plot and then repainting it shows
+//    the cleared state on screen - that is the flicker.  A column is narrow
+//    enough that the intermediate state is never visible.
+//  * One summary lookup serves all eight channels.  Drawing channel by channel
+//    asked the LOD pyramid for the same column range eight times over; doing it
+//    once cuts the work per redraw by the same factor, which keeps the UI out
+//    of the way of the next capture.
+// ---------------------------------------------------------------------------
+void WaveformView::renderTraces(LaGfx& d, const CaptureBuffer& buf,
+                                const ChannelConfig channels[LA_MAX_CHANNELS],
+                                const Rect& band, int lane, int lod,
+                                const Ticks& ticks) {
+    if (band.h <= 0 || band.w <= 0) return;
+
+    // Lane geometry, resolved once instead of per column.
+    struct Lane {
+        int ch;
+        int yHigh;
+        int yLow;
+        int sep;
+        uint16_t color;
+        bool invert;
+    };
+    Lane lanes[LA_MAX_CHANNELS];
+    int nLanes = 0;
+    int laneY = band.y;
+    for (int ch = 0; ch < LA_MAX_CHANNELS; ++ch) {
+        if (!channels[ch].enabled) continue;
+        const int pad = lane / 5;
+        lanes[nLanes++] = Lane{ch, laneY + pad, laneY + lane - pad - 2,
+                               laneY + lane - 1, theme::kChannel[ch],
+                               channels[ch].invert};
+        laneY += lane;
+    }
+
     const uint32_t n = buf.count();
-    if (n == 0 || lane.h < 6) return;
+    const int x0 = band.x;
+    const int x1 = band.x + band.w;
+    int prevY[LA_MAX_CHANNELS];
+    for (int i = 0; i < LA_MAX_CHANNELS; ++i) prevY[i] = -1;
 
-    const int pad = lane.h / 5;
-    const int yHigh = lane.y + pad;
-    const int yLow = lane.y + lane.h - pad - 2;
-    const uint8_t mask = static_cast<uint8_t>(1u << ch);
+    int tickIdx = 0;
+    for (int x = x0; x < x1; ++x) {
+        // Background first, in the gridline colour on tick columns.
+        while (tickIdx < ticks.n && ticks.x[tickIdx] < x) ++tickIdx;
+        const bool onTick = (tickIdx < ticks.n && ticks.x[tickIdx] == x);
+        d.drawFastVLine(x, band.y, band.h, onTick ? theme::kGrid : theme::kBg);
+        for (int i = 0; i < nLanes; ++i) {
+            d.drawPixel(x, lanes[i].sep, theme::kGrid);
+        }
 
-    const int x0 = lane.x;
-    const int x1 = lane.x + lane.w;
+        if (n == 0) continue;
 
-    if (_spp >= 1.0) {
-        // One or more samples per column: use the (OR, AND) summary so a single
-        // sample glitch inside the column still shows up as a transition.
-        int prevY = -1;
-        for (int x = x0; x < x1; ++x) {
-            const double s0d = _start + (x - x0) * _spp;
-            const double s1d = s0d + _spp;
-            if (s1d < 0 || s0d >= n) { prevY = -1; continue; }
-            uint32_t s0 = s0d < 0 ? 0 : static_cast<uint32_t>(s0d);
-            uint32_t s1 = s1d > n ? n : static_cast<uint32_t>(s1d);
-            if (s1 <= s0) s1 = s0 + 1;
-            if (s1 > n) s1 = n;
+        const double s0d = _start + (x - x0) * _spp;
+        const double s1d = s0d + _spp;
+        if (s1d < 0 || s0d >= n) {
+            for (int i = 0; i < LA_MAX_CHANNELS; ++i) prevY[i] = -1;
+            continue;
+        }
 
-            LodEntry e = buf.summarize(lod, s0, s1 - s0);
+        uint32_t s0 = s0d < 0 ? 0 : static_cast<uint32_t>(s0d);
+        uint32_t s1 = s1d > n ? n : static_cast<uint32_t>(s1d);
+        if (s1 <= s0) s1 = s0 + 1;      // zoomed in past one sample per column
+        if (s1 > n) s1 = n;
+
+        // One lookup covering every channel in this column.
+        const LodEntry e = buf.summarize(lod, s0, s1 - s0);
+
+        for (int i = 0; i < nLanes; ++i) {
+            const Lane& L = lanes[i];
+            const uint8_t mask = static_cast<uint8_t>(1u << L.ch);
             bool anyHigh = (e.orv & mask) != 0;
             bool allHigh = (e.andv & mask) != 0;
-            if (invert) {
+            if (L.invert) {
                 const bool anyLow = !allHigh;
                 allHigh = !anyHigh;
                 anyHigh = anyLow;
             }
 
             if (anyHigh && !allHigh) {
-                d.drawFastVLine(x, yHigh, yLow - yHigh + 1, color);
-                prevY = -1;    // both levels present, nothing to connect
+                // Both levels inside this column: draw the transition span.
+                d.drawFastVLine(x, L.yHigh, L.yLow - L.yHigh + 1, L.color);
+                prevY[L.ch] = -1;
             } else {
-                const int y = allHigh ? yHigh : yLow;
-                if (prevY >= 0 && prevY != y) {
-                    d.drawFastVLine(x, y < prevY ? y : prevY,
-                                    abs(y - prevY) + 1, color);
+                const int y = allHigh ? L.yHigh : L.yLow;
+                if (prevY[L.ch] >= 0 && prevY[L.ch] != y) {
+                    const int top = y < prevY[L.ch] ? y : prevY[L.ch];
+                    d.drawFastVLine(x, top, abs(y - prevY[L.ch]) + 1, L.color);
+                } else {
+                    d.drawPixel(x, y, L.color);
                 }
-                d.drawPixel(x, y, color);
-                prevY = y;
+                prevY[L.ch] = y;
             }
-        }
-    } else {
-        // Fewer than one sample per column: draw real steps.
-        int32_t s = static_cast<int32_t>(floor(_start));
-        if (s < 0) s = 0;
-        const double pxPerSample = 1.0 / _spp;
-        int prevY = -1;
-        int prevX = -1;
-        for (; s < static_cast<int32_t>(n); ++s) {
-            const double xf = xForSample(s);
-            if (xf >= x1) break;
-            bool high = (buf.at(s) & mask) != 0;
-            if (invert) high = !high;
-            const int y = high ? yHigh : yLow;
-            int xa = static_cast<int>(xf + 0.5);
-            int xb = static_cast<int>(xf + pxPerSample + 0.5);
-            if (xb <= xa) xb = xa + 1;
-            if (xb <= x0) { prevY = y; prevX = xb; continue; }
-            if (xa < x0) xa = x0;
-            if (xb > x1) xb = x1;
-            if (prevY >= 0 && prevY != y && prevX >= x0 && prevX < x1) {
-                d.drawFastVLine(xa, y < prevY ? y : prevY, abs(y - prevY) + 1, color);
-            }
-            d.drawFastHLine(xa, y, xb - xa, color);
-            prevY = y;
-            prevX = xb;
         }
     }
 }

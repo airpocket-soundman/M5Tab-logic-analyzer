@@ -68,11 +68,14 @@ private:
     void onWaveTouch(int x, int y);
 
     void drawAll();
+    void paintChromeBackground();
+    void drawChrome();
     void drawTopBar();
     void drawBottomBar();
     void drawPanel();
     void drawOverlay();
     void drawButton(const Button& b);
+    void drawField(const char* text, int x, int y, int w, uint16_t fg);
     void toast(const char* fmt, ...);
 
     void adjustRate(int delta);
@@ -145,9 +148,19 @@ private:
     static constexpr int kMaxButtons = 96;
     Button _btn[kMaxButtons];
     int    _btnCount = 0;
+    // Snapshot of what is currently on screen, so only buttons that actually
+    // changed get repainted.  Clearing and redrawing a whole bar every capture
+    // is what made the chrome flicker.
+    Button _prevBtn[kMaxButtons];
+    int    _prevBtnCount = 0;
+
+    // Off-screen buffer for the plot; see gfx.h for why it exists.
+    LaCanvas _canvas;
+    bool     _canvasOk = false;
 
     Rect _rTop, _rWave, _rPanel, _rBottom, _rOverlay;
 
+    char     _statusPrev[96] = {0};
     char     _toast[80] = {0};
     uint32_t _toastMs   = 0;
 
@@ -156,6 +169,7 @@ private:
     int  _apiLen      = 0;
     bool _apiOverflow = false;
 
+    bool _panelBgDirty = true;
     bool _dirtyChrome = true;
     bool _dirtyWave   = true;
     bool _dirtyPanel  = true;

@@ -255,7 +255,7 @@ single</code></pre>
 
   <h2 id="autoscale">Why the view is not fitted after a capture</h2>
   <p>Fitting a whole capture into the plot means drawing 2 MSa across roughly 1180 pixels — about 1700 samples per column. Every channel collapses into a solid bar and no structure is visible at all.</p>
-  <p>So after each capture the zoom is chosen from the data instead: <b>the narrowest pulse anywhere in the capture is scaled to about 3 pixels</b>, which is the coarsest view where every channel still shows its shape. <span class="kbd">Fit</span> gives the overview when you want it, and <span class="kbd">Auto</span> returns to the automatic scale.</p>
+  <p>So after each capture the zoom is chosen from the data instead: <b>the median of the per-channel minimum pulse widths is scaled to about 3 pixels</b>. The median rather than the minimum, because a fast SPI clock sitting next to a slow UART would otherwise pull the zoom in so far that every other channel became a flat line. <span class="kbd">Fit</span> gives the overview when you want it, and <span class="kbd">Auto</span> returns to the automatic scale.</p>
 
   <h2 id="lod">Why glitches survive zooming out</h2>
   <p>Naively decimating 8 MSa down to 1150 columns would hide single-sample spikes, which defeats the purpose of a logic analyzer.</p>
@@ -485,6 +485,16 @@ Send-Cmd 'ping'</code></pre>
   <h2 id="trig-impl">The trigger</h2>
   <p>There is no hardware trigger, so the buffer is filled and <b>then</b> searched. A <code>TriggerConfig</code> folds down to four bitmasks (rise, fall, level-high, level-low), which makes the search loop a few instructions per sample.</p>
   <p>The search starts one pre-trigger length into the buffer, which guarantees the requested amount of pre-trigger data exists ahead of whatever it finds.</p>
+
+  <h2 id="render">Rendering and flicker</h2>
+  <p>The Tab5's MIPI-DSI panel has a single framebuffer (M5GFX configures it with <code>num_fbs = 1</code>) that is scanned out continuously. <b>Anything drawn straight to the display is visible the instant it lands — including the gap between clearing a region and repainting it.</b> That gap is the flicker.</p>
+  <p>Three things address it.</p>
+  <ul>
+    <li><b>The plot is composed off-screen</b> into an <code>M5Canvas</code> in PSRAM (1184×454×2, about 1.03 MB) and pushed in one go, so no intermediate state ever reaches the panel.</li>
+    <li><b>Column-at-a-time rendering.</b> Instead of clearing the whole plot and then painting channel by channel, each column's background, gridline, lane separators and all eight traces are drawn together. As a side effect the LOD pyramid is now consulted <b>once per column instead of eight times</b>, cutting the work per redraw by the same factor.</li>
+    <li><b>The chrome updates incrementally.</b> Only buttons whose appearance changed are repainted, and a measurement value clears just the tail of its own field. No full-area <code>fillRect</code> remains anywhere.</li>
+  </ul>
+  <p>None of this competes with acquisition. Drawing only runs between captures — the loop is single threaded — so the push never contends with the DMA or the copy ISR for PSRAM bandwidth.</p>
 
   <h2 id="lod-impl">The LOD pyramid</h2>
   <p>When a capture completes, an (OR, AND) summary pyramid is built. Level 0 folds 64 samples into one entry and each level above halves again. It costs 2 bytes × (N/64) × 2 ≈ N/16 bytes, so about 512 KB even for 8 MSa.</p>
