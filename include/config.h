@@ -72,8 +72,13 @@ static constexpr int8_t kChannelPin[LA_MAX_CHANNELS] = {
 // goes inactive" - which never happens if the enable is tied active.  This pin
 // supplies that permanently asserted enable.  The chip drives it itself, so
 // nothing has to be wired to it; it simply must not be used for anything else.
-// M5-Bus pin 8.
-#define LA_PIN_VALID 45
+//
+// G51 is the pick because the schematic gives it a dedicated TVS
+// (PESDNC2FD3V3B) rather than one of the shared ESD0524P arrays every other
+// M5-Bus pin sits on.  Parking a permanently driven signal next to two probe
+// channels - which G45 did, sharing array D24 with CH4 and CH5 - is the one
+// thing worth avoiding here, and it costs nothing.  M5-Bus pin 26.
+#define LA_PIN_VALID 51
 
 // ---------------------------------------------------------------------------
 //  microSD (Tab5 uses SDMMC 4bit).  Overridden at runtime by M5.getPin() when

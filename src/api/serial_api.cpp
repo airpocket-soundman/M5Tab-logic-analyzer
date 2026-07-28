@@ -251,10 +251,12 @@ void App::apiStatus() {
                   (long long)_info.triggerIndex, (unsigned)_captureCount,
                   trigModeName(_trig.mode), (unsigned)_trig.posPercent);
 
+    Serial.flush();
     Serial.print("\"trig_cond\":[");
     for (int ch = 0; ch < LA_MAX_CHANNELS; ++ch) {
         Serial.printf("%s\"%s\"", ch ? "," : "", condName(_trig.cond[ch]));
     }
+    Serial.flush();
     Serial.print("],\"chan\":[");
     for (int ch = 0; ch < LA_MAX_CHANNELS; ++ch) {
         Serial.printf("%s{\"pin\":%d,\"on\":%s,\"inv\":%s}", ch ? "," : "",
@@ -422,6 +424,11 @@ void App::apiStats() {
                       ch ? "," : "", ch, (unsigned)s.edges, (unsigned)s.risingEdges,
                       s.freqHz, s.dutyPercent, s.minHighSec, s.minLowSec,
                       s.highRatio);
+        // This response runs past 800 bytes and the CDC transmit buffer is
+        // smaller, so drain as we go.  One flush at the end of the command is
+        // not enough - the tail comes back truncated and the host sees
+        // malformed JSON.
+        Serial.flush();
     }
     Serial.print("]}\n");
 }

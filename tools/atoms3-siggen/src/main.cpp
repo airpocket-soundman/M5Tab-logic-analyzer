@@ -39,6 +39,7 @@ enum class Mode : uint8_t { Off, Square, Uart, Counter, Spi };
 Mode     g_mode = Mode::Off;
 char     g_text[32] = "M5Tab5";
 uint32_t g_gapUs = 200;
+uint32_t g_rot   = 0;   // counter bit -> pin rotation
 int      g_squarePin = kPins[0];
 
 hw_timer_t* g_timer = nullptr;
@@ -94,7 +95,11 @@ void IRAM_ATTR onTick() {
     uint32_t set = 0, clr = 0;
     for (int i = 0; i < kNumPins; ++i) {
         const uint32_t bit = 1u << kPins[i];
-        if (v & (1u << i)) set |= bit; else clr |= bit;
+        // Rotating which counter bit drives which pin separates "this pin is
+        // different" from "this signal is slow": the slow bit walks across the
+        // pins while the wiring stays put.
+        const int b = (i + g_rot) % kNumPins;
+        if (v & (1u << b)) set |= bit; else clr |= bit;
     }
     REG_WRITE(GPIO_OUT_W1TS_REG, set);
     REG_WRITE(GPIO_OUT_W1TC_REG, clr);
@@ -204,6 +209,8 @@ void cmdUart(const char* args) {
 void cmdCounter(const char* args) {
     uint32_t periodUs = 10;
     argU32(args, "period", &periodUs);
+    argU32(args, "rotate", &g_rot);
+    g_rot %= kNumPins;
     if (periodUs < 2) periodUs = 2;
 
     releaseOutput();
