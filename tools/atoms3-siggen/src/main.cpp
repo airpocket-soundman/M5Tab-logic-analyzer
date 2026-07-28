@@ -112,11 +112,13 @@ void releaseOutput() {
         default: break;
     }
     g_mode = Mode::Off;
-    // Idle high on every output, matching a resting UART line and an unloaded
-    // probe.  Leaving a pad driving would fight whatever else is on the wire.
+    // Release to high impedance rather than parking high.  These pins stay
+    // jumpered to the analyzer, and a pad held at 3.3 V fights the analyzer's
+    // own test generator when it wants to drive the same wire - which silently
+    // wrecks any measurement taken in that state.  The analyzer's input
+    // pull-ups hold the line high on their own.
     for (int i = 0; i < kNumPins; ++i) {
-        pinMode(kPins[i], OUTPUT);
-        digitalWrite(kPins[i], HIGH);
+        pinMode(kPins[i], INPUT);
     }
 }
 
